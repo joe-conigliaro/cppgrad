@@ -544,36 +544,8 @@ kernel void slice_backward_scatter_add_view_f32(device const float* grad_out [[b
 
 // Copy view
 
-// kernel void copy_view_f32(device const float* src [[buffer(0)]],
-//                           device float* dst [[buffer(1)]],
-//                           constant mslp::CopyViewParams& P [[buffer(2)]],
-//                           uint gid [[thread_position_in_grid]]) {
-//     if (gid >= P.n) return;
-
-//     uint ocoords[8]; coords_from_linear(gid, P.dst_v.shape, P.dst_v.rank, ocoords);
-//     uint icoords[8];
-
-//     bool same = (P.src_v.rank == P.dst_v.rank);
-//     if (same) {
-//         for (ushort i=0;i<P.src_v.rank;++i) if (P.src_v.shape[i] != P.dst_v.shape[i]) { same=false; break; }
-//     }
-//     if (same) {
-//         for (ushort i=0;i<P.src_v.rank;++i) icoords[i] = ocoords[i];
-//     } else {
-//         ushort r_in = P.src_v.rank, r_out = P.dst_v.rank;
-//         ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
-//         for (ushort i=0; i<r_in; ++i) {
-//             uint oc = ocoords[off + i];
-//             icoords[i] = (P.src_v.shape[i] == 1) ? 0 : oc;
-//         }
-//     }
-
-//     uint si = index_from_coords(icoords, P.src_v);
-//     uint di = index_from_coords(ocoords, P.dst_v);
-//     dst[di] = src[si];
-// }
-kernel void copy_view_f32(device const float* src [[buffer(0)]],
-                          device float* dst [[buffer(1)]],
+kernel void copy_view_f32(device float* dst [[buffer(1)]],
+                          device const float* src [[buffer(0)]],
                           constant mslp::CopyViewParams& P [[buffer(2)]],
                           uint gid [[thread_position_in_grid]]) {
     if (gid >= P.n) return;

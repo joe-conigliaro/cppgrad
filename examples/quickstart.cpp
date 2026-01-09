@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Joe Conigliaro
+// https://github.com/joe-conigliaro
 #include <vector>
 #include <iomanip>
 #include <iostream>

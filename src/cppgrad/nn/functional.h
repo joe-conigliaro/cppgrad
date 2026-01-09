@@ -13,9 +13,9 @@ namespace nn {
 namespace functional {
 
 enum class Reduction {
+    NONE,
     MEAN,
-    SUM,
-    NONE
+    SUM
 };
 
 inline utils::Ref<ir::Tensor> reduce(const utils::Ref<ir::Tensor>& in, Reduction reduction, const std::vector<int>& axes = {}, bool keep_dims = false) {

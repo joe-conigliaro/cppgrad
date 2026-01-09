@@ -24,7 +24,7 @@ using namespace cppgrad;
 int main() {
     utils::global_rng().seed(42);
     backend::DeviceManager::instance().init();
-    backend::DeviceManager::set_default_device(backend::DeviceType::CPU);
+    // backend::DeviceManager::set_default_device(backend::DeviceType::CPU);
     // backend::DeviceManager::set_default_device(backend::DeviceType::METAL);
     // cppgrad::backend::cpu::Runtime::instance().set_num_threads(8);
     // cppgrad::backend::cpu::Runtime::instance().set_grain(128);

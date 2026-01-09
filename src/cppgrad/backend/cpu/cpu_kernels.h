@@ -102,7 +102,6 @@ inline void binary_op_kernel(const Buffer& a, const Buffer& b, Buffer& out, Func
     //     out_ptr[i] = op(a_ptr[flat_a], b_ptr[flat_b]);
     // }
     cpu::parallel_for((size_t)0, out_numel, [&](size_t s, size_t e) {
-        // Thread/task-local scratch
         std::vector<size_t> idx_out(strides_out.size());
         std::vector<size_t> idx_a(shape_a.size());
         std::vector<size_t> idx_b(shape_b.size());
@@ -679,119 +678,6 @@ inline void reduce_view_kernel(
     }
 }
 
-// template<typename T>
-// inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
-//                                const Buffer& b, const backend::View& vb,
-//                                Buffer& out, const backend::View& vo) {
-//     const T* ap = static_cast<const T*>(a.data());
-//     const T* bp = static_cast<const T*>(b.data());
-//     T* op = static_cast<T*>(out.data());
-
-//     if (va.rank != 2 || vb.rank != 2 || vo.rank != 2) {
-//         throw std::runtime_error("matmul_view_kernel: rank-2 required");
-//     }
-//     const size_t M = (size_t)va.shape[0], K = (size_t)va.shape[1];
-//     const size_t Kb = (size_t)vb.shape[0], N = (size_t)vb.shape[1];
-//     if (K != Kb) throw std::runtime_error("matmul_view_kernel: inner dims mismatch");
-//     if (vo.shape[0] != va.shape[0] || vo.shape[1] != vb.shape[1]) throw std::runtime_error("matmul_view_kernel: out shape mismatch");
-
-//     if (va.is_contiguous() && vb.is_contiguous() && vo.is_contiguous() &&
-//         va.is_offset_zero() && vb.is_offset_zero() && vo.is_offset_zero()) {
-//         for (size_t i=0;i<M;++i) {
-//             for (size_t j=0;j<N;++j) {
-//                 T sum = 0;
-//                 const size_t arow = i*K;
-//                 const size_t bcol = j;
-//                 for (size_t k=0;k<K;++k) sum += ap[arow + k] * bp[k*N + bcol];
-//                 op[i*N + j] = sum;
-//             }
-//         }
-//         return;
-//     }
-
-//     for (size_t i=0;i<M;++i) {
-//         for (size_t j=0;j<N;++j) {
-//             T sum = 0;
-//             for (size_t k=0;k<K;++k) {
-//                 const size_t ai = va.offset + i*(size_t)va.strides[0] + k*(size_t)va.strides[1];
-//                 const size_t bi = vb.offset + k*(size_t)vb.strides[0] + j*(size_t)vb.strides[1];
-//                 sum += ap[ai] * bp[bi];
-//             }
-//             const size_t oi = vo.offset + i*(size_t)vo.strides[0] + j*(size_t)vo.strides[1];
-//             op[oi] = sum;
-//         }
-//     }
-// }
-// template<typename T>
-// inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
-//                                const Buffer& b, const backend::View& vb,
-//                                Buffer& out, const backend::View& vo) {
-//     const T* ap = static_cast<const T*>(a.data());
-//     const T* bp = static_cast<const T*>(b.data());
-//     T* op = static_cast<T*>(out.data());
-
-//     if (va.rank != 2 || vb.rank != 2 || vo.rank != 2) {
-//         throw std::runtime_error("matmul_view_kernel: rank-2 required");
-//     }
-//     const size_t M  = (size_t)va.shape[0];
-//     const size_t K  = (size_t)va.shape[1];
-//     const size_t Kb = (size_t)vb.shape[0];
-//     const size_t N  = (size_t)vb.shape[1];
-//     if (K != Kb) throw std::runtime_error("matmul_view_kernel: inner dims mismatch");
-//     if (vo.shape[0] != va.shape[0] || vo.shape[1] != vb.shape[1]) {
-//         throw std::runtime_error("matmul_view_kernel: out shape mismatch");
-//     }
-
-//     const bool fast_flat_indexing_ok =
-//         va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d() &&
-//         va.is_offset_zero()  && vb.is_offset_zero()  && vo.is_offset_zero();
-
-//     // Fast path 1: A,B row-major NN, output row-major identity
-//     if (fast_flat_indexing_ok && vb.is_rowmaj_nn_2d()) {
-//         for (size_t i=0; i<M; ++i) {
-//             const size_t arow = i * K;
-//             const size_t crow = i * N;
-//             for (size_t j=0; j<N; ++j) {
-//                 T sum = 0;
-//                 for (size_t k=0; k<K; ++k) {
-//                     sum += ap[arow + k] * bp[k * N + j];
-//                 }
-//                 op[crow + j] = sum;
-//             }
-//         }
-//     }
-//     // Fast path 2: A row-major NN, B row-major TN (B strides [1,K]), output row-major identity
-//     else if (fast_flat_indexing_ok && vb.is_rowmaj_tn_2d()) {
-//         for (size_t i=0; i<M; ++i) {
-//             const size_t arow = i * K;
-//             const size_t crow = i * N;
-//             for (size_t j=0; j<N; ++j) {
-//                 T sum = 0;
-//                 const size_t bcol = j * K; // contiguous along K
-//                 for (size_t k=0; k<K; ++k) {
-//                     sum += ap[arow + k] * bp[bcol + k];
-//                 }
-//                 op[crow + j] = sum;
-//             }
-//         }
-//     }
-//     // Generic stride-aware path
-//     else {
-//         for (size_t i = 0; i < M; ++i) {
-//             const size_t a_row = (size_t)va.offset + i*(size_t)va.strides[0];
-//             const size_t o_row = (size_t)vo.offset + i*(size_t)vo.strides[0];
-//             for (size_t j = 0; j < N; ++j) {
-//                 const size_t b_col = (size_t)vb.offset + j*(size_t)vb.strides[1];
-//                 T sum = 0;
-//                 for (size_t k = 0; k < K; ++k) {
-//                     sum += ap[a_row + k*(size_t)va.strides[1]] * bp[b_col + k*(size_t)vb.strides[0]];
-//                 }
-//                 op[o_row + j*(size_t)vo.strides[1]] = sum;
-//             }
-//         }
-//     }
-// }
-
 template<typename T>
 inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
                                const Buffer& b, const backend::View& vb,
@@ -816,37 +702,6 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
     // NOTE: no offset==0 requirement anymore; we just shift base pointers.
     const bool fast_packed = va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d();
 
-    // // Fast path 1: NN (A NN, B NN, Out NN)
-    // if (fast_packed && vb.is_rowmaj_nn_2d()) {
-    //     const T* ap0 = ap + (size_t)va.offset;
-    //     const T* bp0 = bp + (size_t)vb.offset;
-    //     T*       op0 = op + (size_t)vo.offset;
-
-    //     // Tuneable: small j-tile. 32/64 are typical.
-    //     constexpr size_t BJ = 64;
-
-    //     cpu::parallel_for(0, M, [&](size_t i0, size_t i1) {
-    //         for (size_t i = i0; i < i1; ++i) {
-    //             const size_t arow = i * K;
-    //             const size_t crow = i * N;
-
-    //             for (size_t jb = 0; jb < N; jb += BJ) {
-    //                 const size_t jend = std::min(N, jb + BJ);
-
-    //                 for (size_t j = jb; j < jend; ++j) {
-    //                     T sum = 0;
-    //                     // bp0[k*N + j] is strided by N -> not great, but correct.
-    //                     for (size_t k = 0; k < K; ++k) {
-    //                         sum += ap0[arow + k] * bp0[k * N + j];
-    //                     }
-    //                     op0[crow + j] = sum;
-    //                 }
-    //             }
-    //         }
-    //     });
-
-    //     return;
-    // }
     // Fast path 1: NN (A NN, B NN, Out NN)
     if (fast_packed && vb.is_rowmaj_nn_2d()) {
         const T* ap0 = ap + (size_t)va.offset;

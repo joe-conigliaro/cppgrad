@@ -9,6 +9,7 @@ A small C++17 autograd + neural-network library.
 - **IR-style graph**: Ops create new `Tensor` nodes with child links.
 - **Intrusive ref counting**: Graph ownership via `utils::Ref<T>`.
 - **Batch realization**: `GraphContext` / `AutoGraphScope` batches execution.
+- **Arena Allocation**: Arena allocation when `AutoGraphScope` is active, otherwise falls back to heap.
 - **View-based layouts**: `AccessMeta` encodes `shape/strides/offset` for zero-copy movement ops.
 - **Materialization when needed**: `contiguous()` (and copy paths) produce dense `offset=0` buffers.
 - **Multiple backends**: CPU + Metal.
@@ -113,7 +114,7 @@ Run via the repo script:
   - Add per-device `ExecutionContext` and batch command buffer submission.
   - Remove per-op `waitUntilCompleted`; sync only on host readback.
 - Context-aware allocator copies
-  - Add optional `ExecContext*` to allocator copy methods for async blits/uploads.
+  - Add optional `ExecutionContext*` to allocator copy methods for async blits/uploads.
 - Kernel fusion
   - Fuse elementwise chains (unary/binary) within schedules.
 - CPU SIMD & BLAS

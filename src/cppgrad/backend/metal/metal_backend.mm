@@ -376,12 +376,9 @@ void MetalBackend::matmul(const Buffer& a, const backend::View& va,
     const bool tiny = (P.M < 8 || P.N < 8 || P.K < 8);
 
     // Layout flags decide which tiled PSO to use
-    const bool nn_layout =
-        va.is_rowmaj_nn_2d() && vb.is_rowmaj_nn_2d() &&
-        vo.is_contiguous()   && vo.last_axis_contiguous();
-    const bool tn_layout =
-        va.is_rowmaj_nn_2d() && vb.is_rowmaj_tn_2d() &&
-        vo.is_contiguous()   && vo.last_axis_contiguous();
+    const bool fast_packed = va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d();
+    const bool nn_layout = fast_packed && vb.is_rowmaj_nn_2d();
+    const bool tn_layout = fast_packed && vb.is_rowmaj_tn_2d();
 
     id<MTLCommandBuffer> cb = [_impl->queue commandBuffer];
 
@@ -568,8 +565,8 @@ void MetalBackend::copy_view(const Buffer& src, const backend::View& vs,
                              Buffer& dst, const backend::View& vd) const {
     if (dst.size_bytes() == 0) return;
 
-    // If both views are identity row-major with offset 0 and same shape, just blit:
-    if (vs.is_contiguous() && vd.is_contiguous() && vs.is_offset_zero() && vd.is_offset_zero() && same_shape(vs, vd)) {
+    // If both views are identity (row-major with offset 0) and same shape, just blit:
+    if (vs.is_identity() && vd.is_identity() && same_shape(vs, vd)) {
         copy(dst, src);
         return;
     }

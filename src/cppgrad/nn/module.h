@@ -71,8 +71,7 @@ public:
 protected:
     void register_parameter(const std::string& name, utils::Ref<ir::Tensor> param) {
         if (!param) throw std::runtime_error("register_parameter: null tensor");
-        // if (!param->is_leaf()) throw std::runtime_error("register_parameter: param must be a leaf");
-        if (!param->is_canonical_leaf()) throw std::runtime_error("register_parameter: non-canonical leaf");
+        if (!param->is_canonical_leaf()) throw std::runtime_error("register_parameter: param must be a canonical leaf");
         if (_parameters.count(name)) throw std::runtime_error("register_parameter: parameter already exists: " + name);
 
         param->schedule(); // ensure storage exists

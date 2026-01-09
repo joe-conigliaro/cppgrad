@@ -214,12 +214,6 @@ void CPUBackend::matmul(const Buffer& a, const backend::View& va,
 // Generic view copy
 
 void CPUBackend::copy_view(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) const {
-    // // Identity mapping -> memcpy
-    // if (vs.is_identity() && vd.is_identity() && same_shape(vs, vd)) {
-    //     const size_t bytes = vd.numel * backend::size(dst.dtype());
-    //     if (bytes) std::memcpy(dst.data(), src.data(), bytes);
-    //     return;
-    // }
     // Single fast path: dense row-major on both sides, same logical shape.
     if (vs.is_contiguous() && vd.is_contiguous() && same_shape(vs, vd)) {
         const size_t item  = backend::size(dst.dtype());
