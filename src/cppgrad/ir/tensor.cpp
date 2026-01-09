@@ -31,7 +31,7 @@ static void warn_no_auto_graph_scope() {
     }
 }
 
-std::shared_ptr<backend::Buffer> Tensor::materialize_buffer_now() const {
+std::shared_ptr<backend::Buffer> Tensor::materialize_buffer() const {
     auto dev = backend::DeviceManager::device(device());
     if (!dev) throw std::runtime_error("materialize: device not found");
 
@@ -266,17 +266,7 @@ void Tensor::copy_into_parameter(const std::shared_ptr<backend::Buffer>& src) {
 }
 
 utils::Ref<Tensor> Tensor::assign(const utils::Ref<const Tensor>& src) const {
-    // #ifdef CPPGRAD_DEBUG
-    //     if (!is_canonical_leaf()) throw std::runtime_error("Tensor::assign: dst tensor is not a canonical leaf");
-    // #endif
-    if (!is_canonical_leaf()) throw std::runtime_error("Tensor::assign: dst tensor is not a canonical leaf");
-    if (this->shape() != src->shape()) {
-        throw std::runtime_error("Tensor::assign: shape mismatch");
-    }
-    if (this->dtype() != src->dtype()) {
-        throw std::runtime_error("Tensor::assign: dtype mismatch");
-    }
-    return Tensor::make(AssignOp{}, {self() /* dst */, src}, this->shape(), this->device(), this->dtype());
+    return ir::assign(self(), src);
 }
 
 //  Backward

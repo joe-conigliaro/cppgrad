@@ -29,8 +29,8 @@ int main() {
         {
             std::vector<float> v{1.f, 2.f, 3.5f};
             auto t = ir::from_vector<float>(v, {3});
-            // auto s = t->data_span<float>();
-            auto s = t->device() != backend::DeviceType::CPU ? t->to(backend::DeviceType::CPU)->data_span<float>() : t->data_span<float>();
+            auto t_cpu = (t->device() != backend::DeviceType::CPU) ? t->to(backend::DeviceType::CPU) : t;
+            auto s = t_cpu->data_span<float>();
             EXPECT_TRUE(s.size() == 3, "data_span size must match numel");
             EXPECT_TRUE(s[0] == 1.f, "data_span content check");
             if (g_fail_count == 0) std::cout << "[PASS] data_span\n";
@@ -41,8 +41,8 @@ int main() {
             std::vector<float> z;
             auto tz = ir::from_vector<float>(z, {0});
             auto oz = tz->to_vector<float>();
-            // auto sz = tz->data_span<float>();
-            auto sz = tz->device() != backend::DeviceType::CPU ? tz->to(backend::DeviceType::CPU)->data_span<float>() : tz->data_span<float>();
+            auto sz_cpu = (tz->device() != backend::DeviceType::CPU) ? tz->to(backend::DeviceType::CPU) : tz;
+            auto sz = sz_cpu->data_span<float>();
             EXPECT_TRUE(oz.empty(), "to_vector on zero-length should be empty");
             EXPECT_TRUE(sz.size() == 0, "data_span size should be 0 for zero-length");
             if (g_fail_count == 0) std::cout << "[PASS] zero-length\n";

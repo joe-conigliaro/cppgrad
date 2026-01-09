@@ -9,7 +9,7 @@
 namespace cppgrad {
 namespace ir {
 
-utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& other);
+utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<const Tensor>& src);
 
 // Unary Ops
 utils::Ref<Tensor> relu(const utils::Ref<const Tensor>& t);

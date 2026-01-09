@@ -51,7 +51,7 @@ public:
     std::shared_ptr<backend::Buffer> realized_buffer() const;
     utils::Ref<Tensor> to(backend::DeviceType device) const;
 
-    std::shared_ptr<backend::Buffer> materialize_buffer_now() const;
+    std::shared_ptr<backend::Buffer> materialize_buffer() const;
 
     template<typename T> T item() const;
     template<typename T> std::vector<T> to_vector() const;
@@ -77,7 +77,7 @@ public:
     void set_parameter_data(const std::shared_ptr<backend::Buffer>& src);
     void copy_into_parameter(const std::shared_ptr<backend::Buffer>& src);
 
-    utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& other) const;
+    utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& src) const;
 
     // Graph access
     const Op& op() const noexcept { return _op; }
@@ -169,7 +169,7 @@ T Tensor::item() const {
     if (!dev) throw std::runtime_error("item(): device not found");
 
     // Materialize view to a 1-element dense buffer, then copy.
-    auto dense = materialize_buffer_now();
+    auto dense = materialize_buffer();
 
     T result{};
     dev->allocator()->copy_device_to_host(&result, *dense);
@@ -201,18 +201,21 @@ std::vector<T> Tensor::to_vector() const {
     auto dev = backend::DeviceManager::device(this->device());
     if (!dev) throw std::runtime_error("to_vector: device not found");
 
-    auto dense = materialize_buffer_now();
+    auto dense = materialize_buffer();
     dev->allocator()->copy_device_to_host(host.data(), *dense);
     return host;
 }
 
 template<typename T>
 cppgrad::Span<const T> Tensor::data_span() const {
-    if (backend::dtype_v<T> != this->dtype()) {
-        throw std::runtime_error("data_span: dtype mismatch");
-    }
+    if (backend::dtype_v<T> != this->dtype()) throw std::runtime_error("data_span: dtype mismatch");
     // const auto& buf = schedule();
     const auto& buf = eval();
+
+    if (buf->device() != backend::DeviceType::CPU) {
+        throw std::runtime_error("data_span: only valid for CPU tensors. Use to_vector()/item() for device tensors.");
+    }
+
     if (!buf) throw std::runtime_error("data_span: null buffer");
     const T* p = static_cast<const T*>(buf->data());
     if (!p && numel() > 0) throw std::runtime_error("data_span: null ptr on non-empty tensor");

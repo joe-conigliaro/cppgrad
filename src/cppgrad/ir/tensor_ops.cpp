@@ -29,7 +29,11 @@ static utils::Ref<Tensor> binary(BinaryOpType op, const utils::Ref<const Tensor>
 // Public API
 
 utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<const Tensor>& src) {
-    return dst->assign(src);
+    if (!dst->is_canonical_leaf()) throw std::runtime_error("assign: dst tensor is not a canonical leaf");
+    if (dst->shape() != src->shape()) throw std::runtime_error("assign: shape mismatch");
+    if (dst->dtype() != src->dtype()) throw std::runtime_error("assign: dtype mismatch");
+    if (dst->device() != src->device()) throw std::runtime_error("assign: device mismatch (use `src.to(dst->device())` first)");
+    return Tensor::make(AssignOp{}, {dst, src}, dst->shape(), dst->device(), dst->dtype());
 }
 
 // Unary Ops
