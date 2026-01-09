@@ -151,7 +151,7 @@ static void test_broadcast_backward_add_mean() {
     auto gb = b->grad()->to_vector<float>();
 
     auto GX = X->grad();
-    std::cout << "grad(X) device=" << (int)GX->device() << " dtype=" << (int)GX->dtype()
+    std::cout << "grad(X) device=" << (int)GX->device_type() << " dtype=" << (int)GX->dtype()
               << " shape=" << utils::vector::to_string(GX->shape()) << "\n";
     auto sGX = ir::sum(GX)->item<float>();
     std::cout << "sum grad X = " << sGX << "\n";

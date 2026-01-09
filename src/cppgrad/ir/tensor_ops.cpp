@@ -14,14 +14,14 @@ namespace ir {
 // Helpers
 
 static utils::Ref<Tensor> unary(UnaryOpType op, const utils::Ref<const Tensor>& t) {
-  auto out = Tensor::make(UnaryOp{op}, { t }, t->shape(), t->device(), t->dtype());
+  auto out = Tensor::make(UnaryOp{op}, { t }, t->shape(), t->device_type(), t->dtype());
   out->set_access_meta(AccessMeta::contiguous_from(out->shape()));
   return out;
 }
 
 static utils::Ref<Tensor> binary(BinaryOpType op, const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b) {
   auto out_shape = utils::shape::get_broadcast_shape(a->shape(), b->shape());
-  auto out = Tensor::make(BinaryOp{op}, { a, b }, out_shape, a->device(), a->dtype());
+  auto out = Tensor::make(BinaryOp{op}, { a, b }, out_shape, a->device_type(), a->dtype());
   out->set_access_meta(AccessMeta::contiguous_from(out_shape));
   return out;
 }
@@ -32,8 +32,8 @@ utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<
     if (!dst->is_canonical_leaf()) throw std::runtime_error("assign: dst tensor is not a canonical leaf");
     if (dst->shape() != src->shape()) throw std::runtime_error("assign: shape mismatch");
     if (dst->dtype() != src->dtype()) throw std::runtime_error("assign: dtype mismatch");
-    if (dst->device() != src->device()) throw std::runtime_error("assign: device mismatch (use `src.to(dst->device())` first)");
-    return Tensor::make(AssignOp{}, {dst, src}, dst->shape(), dst->device(), dst->dtype());
+    if (dst->device_type() != src->device_type()) throw std::runtime_error("assign: device mismatch (use `src.to(dst->device_type())` first)");
+    return Tensor::make(AssignOp{}, {dst, src}, dst->shape(), dst->device_type(), dst->dtype());
 }
 
 // Unary Ops
@@ -64,7 +64,7 @@ utils::Ref<Tensor> sum(const utils::Ref<const Tensor>& t, const std::vector<int>
     auto axes_n = cppgrad::utils::vector::normalize_axes(axes_in, rank);
     auto out_shape = utils::shape::get_reduce_shape(in_shape, axes_n, keep_dims);
 
-    return Tensor::make(ReduceOp{ ReduceOpType::SUM, axes_n, keep_dims }, {t}, out_shape, t->device(), t->dtype());
+    return Tensor::make(ReduceOp{ ReduceOpType::SUM, axes_n, keep_dims }, {t}, out_shape, t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> max(const utils::Ref<const Tensor>& t, const std::vector<int>& axes, bool keep_dims) {
@@ -75,7 +75,7 @@ utils::Ref<Tensor> max(const utils::Ref<const Tensor>& t, const std::vector<int>
     auto axes_n = cppgrad::utils::vector::normalize_axes(axes_in, rank);
     auto out_shape = utils::shape::get_reduce_shape(in_shape, axes_n, keep_dims);
 
-    return Tensor::make(ReduceOp{ ReduceOpType::MAX, axes_n, keep_dims }, {t}, out_shape, t->device(), t->dtype());
+    return Tensor::make(ReduceOp{ ReduceOpType::MAX, axes_n, keep_dims }, {t}, out_shape, t->device_type(), t->dtype());
 }
 
 // MatMul Op
@@ -84,25 +84,25 @@ utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<co
         throw std::runtime_error("matmul: invalid shapes");
     }
     std::vector<size_t> out_shape = { a->shape()[0], b->shape()[1] };
-    return Tensor::make(MatMulOp{}, {a, b}, out_shape, a->device(), a->dtype());
+    return Tensor::make(MatMulOp{}, {a, b}, out_shape, a->device_type(), a->dtype());
 }
 
 // Materialization / Layout Ops
 utils::Ref<const Tensor> contiguous(const utils::Ref<const Tensor>& t) {
     const auto& am = t->access_meta();
     if (am.contiguous && am.offset == 0) return t;
-    return Tensor::make(CopyOp{}, {t}, AccessMeta::contiguous_from(t->shape(), 0), t->device(), t->dtype());
+    return Tensor::make(CopyOp{}, {t}, AccessMeta::contiguous_from(t->shape(), 0), t->device_type(), t->dtype());
 }
 
 // Movement Ops
 utils::Ref<Tensor> reshape_view(const utils::Ref<const Tensor>& t, const std::vector<size_t>& new_shape) {
     if (utils::vector::numel(t->shape()) != utils::vector::numel(new_shape)) throw std::runtime_error("reshape_view: numel must match");
     auto am = AccessMeta::reshape_from(t->access_meta(), new_shape);
-    return Tensor::make(MovementOp{MovementOpType::RESHAPE, new_shape}, {t}, am, t->device(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::RESHAPE, new_shape}, {t}, am, t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> permute(const utils::Ref<const Tensor>& t, const std::vector<size_t>& axes) {
-    return Tensor::make(MovementOp{MovementOpType::PERMUTE, axes}, {t}, AccessMeta::permute_from(t->access_meta(), axes), t->device(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::PERMUTE, axes}, {t}, AccessMeta::permute_from(t->access_meta(), axes), t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, size_t dim0, size_t dim1) {
@@ -113,12 +113,12 @@ utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, size_t dim0, siz
 }
 
 utils::Ref<Tensor> broadcast(const utils::Ref<const Tensor>& t, const std::vector<size_t>& shape) {
-    return Tensor::make(MovementOp{MovementOpType::BROADCAST, shape}, {t}, AccessMeta::broadcast_from(t->access_meta(), shape), t->device(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::BROADCAST, shape}, {t}, AccessMeta::broadcast_from(t->access_meta(), shape), t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> slice(const utils::Ref<const Tensor>& t, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step) {
     std::vector<size_t> steps = step.empty() ? std::vector<size_t>(begin.size(), 1) : step;
-    return Tensor::make(MovementOp{MovementOpType::SLICE, steps, begin, end}, {t}, AccessMeta::slice_from(t->access_meta(), begin, end, steps), t->device(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::SLICE, steps, begin, end}, {t}, AccessMeta::slice_from(t->access_meta(), begin, end, steps), t->device_type(), t->dtype());
 }
 
 // Composite Ops

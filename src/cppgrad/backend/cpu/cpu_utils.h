@@ -9,7 +9,7 @@ namespace cppgrad {
 namespace backend {
 
 inline void* as_host_ptr(const Buffer& b) {
-    if (b.device() != DeviceType::CPU) {
+    if (b.device_type() != DeviceType::CPU) {
         throw std::runtime_error("as_host_ptr: not a CPU buffer");
     }
     return b.data();

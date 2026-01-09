@@ -135,14 +135,14 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     const auto vd = backend::View::from(t->access_meta());
 
                     // Same-device: view copy.
-                    if (src_buf->device() == t->device()) {
+                    if (src_buf->device_type() == t->device_type()) {
                         out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                         out_device->backend()->copy_view(*src_buf, vs, *out_buf, vd);
                     }
                     // Cross-device: materialize identity on src, transfer identity, write to output on dst.
                     else {
                         // src -> tmp src (identity)
-                        auto* src_device = backend::DeviceManager::device(src_buf->device());
+                        auto* src_device = backend::DeviceManager::device(src_buf->device_type());
                         auto tmp_src = src_device->allocator()->allocate(t->numel(), t->dtype());
                         const auto vid = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
                         src_device->backend()->copy_view(*src_buf, vs, *tmp_src, vid);

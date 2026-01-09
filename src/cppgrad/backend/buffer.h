@@ -15,7 +15,7 @@ class Allocator;
 
 class Buffer {
 public:
-    Buffer(void* ptr, size_t size_bytes, DType dtype, DeviceType device, Allocator* allocator);
+    Buffer(void* ptr, size_t size_bytes, DType dtype, DeviceType device_type, Allocator* allocator);
     ~Buffer();
 
     // Make Buffer move-only.
@@ -28,13 +28,13 @@ public:
     size_t size_bytes() const { return _size_bytes; }
     size_t numel() const { return _size_bytes == 0 ? 0 : _size_bytes / size(_dtype); }
     DType dtype() const { return _dtype; }
-    DeviceType device() const { return _device; }
+    DeviceType device_type() const { return _device_type; }
 
 private:
     void*      _ptr;
     size_t     _size_bytes;
     DType      _dtype;
-    DeviceType _device;
+    DeviceType _device_type;
     Allocator* _allocator;
 };
 

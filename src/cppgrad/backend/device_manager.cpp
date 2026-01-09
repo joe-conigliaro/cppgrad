@@ -33,20 +33,20 @@ Device* DeviceManager::device(DeviceType type) {
     return it->second.get();
 }
 
-void DeviceManager::set_default_device(DeviceType type) {
+void DeviceManager::set_default_device_type(DeviceType device_type) {
     auto& inst = instance();
     std::lock_guard<std::mutex> lock(_mutex);
-    if (inst._devices.find(type) == inst._devices.end()) {
-        throw std::runtime_error("Cannot set default device to an unregistered device type: " + std::string(to_string(type)));
+    if (inst._devices.find(device_type) == inst._devices.end()) {
+        throw std::runtime_error("Cannot set default device to an unregistered device type: " + std::string(to_string(device_type)));
     }
-    inst._default_device = type;
-    std::cout << "Default device set to: " << to_string(type) << std::endl;
+    inst._default_device_type = device_type;
+    std::cout << "Default device set to: " << to_string(device_type) << std::endl;
 }
 
-DeviceType DeviceManager::default_device() {
+DeviceType DeviceManager::default_device_type() {
     auto& inst = instance();
     std::lock_guard<std::mutex> lock(_mutex);
-    return inst._default_device;
+    return inst._default_device_type;
 }
 
 void DeviceManager::register_device(std::unique_ptr<Device> device) {
@@ -65,11 +65,11 @@ void DeviceManager::init() {
     #ifdef CPPGRAD_ON_APPLE
         metal::register_device();
     #endif
-    set_default_device(DeviceType::CPU);
+    set_default_device_type(DeviceType::CPU);
     // if (_devices.count(DeviceType::METAL)) {
-    //     set_default_device(DeviceType::METAL);
+    //     set_default_device_type(DeviceType::METAL);
     // } else {
-    //     set_default_device(DeviceType::CPU);
+    //     set_default_device_type(DeviceType::CPU);
     // }
 }
 

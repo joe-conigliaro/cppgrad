@@ -21,7 +21,7 @@ inline id<MTLBuffer> as_mtl(const Buffer& buf) {
 }
 
 inline id<MTLBuffer> as_mtl_checked(const Buffer& buf) {
-    if (buf.device() != DeviceType::METAL) {
+    if (buf.device_type() != DeviceType::METAL) {
         throw std::runtime_error("as_mtl_checked: not a METAL buffer");
     }
     // Buffer::data() stores a retained MTLBuffer object pointer (void*).

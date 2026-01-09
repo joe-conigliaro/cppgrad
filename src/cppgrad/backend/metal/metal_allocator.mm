@@ -101,7 +101,7 @@ void MetalAllocator::deallocate(void* ptr) {
 // Device -> Host
 void MetalAllocator::copy_device_to_host(void* host_dst, const Buffer& device_src) const {
     if (device_src.size_bytes() == 0 || !host_dst) return;
-    if (device_src.device() != DeviceType::METAL)
+    if (device_src.device_type() != DeviceType::METAL)
         throw std::runtime_error("MetalAllocator::copy_from_device: src is not METAL");
 
     id<MTLBuffer> src = as_mtl_checked(device_src);
@@ -136,7 +136,7 @@ void MetalAllocator::copy_device_to_host(void* host_dst, const Buffer& device_sr
 // Host -> Device
 void MetalAllocator::copy_host_to_device(Buffer& device_dst, const void* host_src) const {
     if (device_dst.size_bytes() == 0 || !host_src) return;
-    if (device_dst.device() != DeviceType::METAL)
+    if (device_dst.device_type() != DeviceType::METAL)
         throw std::runtime_error("MetalAllocator::copy_to_device: dst is not METAL");
 
     id<MTLBuffer> dst = as_mtl_checked(device_dst);
@@ -172,7 +172,7 @@ void MetalAllocator::copy_host_to_device(Buffer& device_dst, const void* host_sr
 // Device -> Device (same Metal device) GPU blit
 void MetalAllocator::copy_device_to_device(Buffer& dst, const Buffer& src) const {
     if (dst.size_bytes() == 0) return;
-    if (dst.device() != DeviceType::METAL || src.device() != DeviceType::METAL)
+    if (dst.device_type() != DeviceType::METAL || src.device_type() != DeviceType::METAL)
         throw std::runtime_error("MetalAllocator::copy_device_to_device: both buffers must be METAL");
 
     id<MTLBuffer> mtl_dst = as_mtl_checked(dst);

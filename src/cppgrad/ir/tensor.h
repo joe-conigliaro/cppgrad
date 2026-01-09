@@ -31,14 +31,14 @@ class GraphContext;
 class Tensor : public utils::RefCounted {
 public:
     // Factory methods
-    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    static utils::Ref<Tensor> make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
 
     // Properties
     const std::vector<size_t>& shape() const noexcept;
     size_t numel() const noexcept;
-    backend::DeviceType device() const noexcept { return _device; }
+    backend::DeviceType device_type() const noexcept { return _device_type; }
     backend::DType dtype() const noexcept { return _dtype; }
 
     // Access meta
@@ -106,9 +106,9 @@ public:
     }
 
 private:
-    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
 
     utils::Ref<Tensor> self() {
         return utils::Ref<Tensor>(this);
@@ -129,7 +129,7 @@ private:
     StorageView _sv;
     Op _op;
     std::vector<utils::Ref<const Tensor>> _children;
-    backend::DeviceType _device;
+    backend::DeviceType _device_type;
     backend::DType _dtype;
     bool _requires_grad = false;
     mutable utils::Ref<Tensor> _grad = nullptr;
@@ -155,7 +155,7 @@ private:
 //     // const auto& buf = schedule();
 //     const auto& buf = eval();
 //     T result{};
-//     auto dev = backend::DeviceManager::device(this->device());
+//     auto dev = backend::DeviceManager::device(this->device_type());
 //     if (!dev) throw std::runtime_error("item(): device not found");
 //     dev->allocator()->copy_device_to_host(&result, *buf);
 //     return result;
@@ -165,7 +165,7 @@ T Tensor::item() const {
     if (numel() != 1) throw std::runtime_error("item(): tensor must be scalar (numel==1)");
     if (backend::dtype_v<T> != this->dtype()) throw std::runtime_error("item(): dtype mismatch");
 
-    auto dev = backend::DeviceManager::device(this->device());
+    auto dev = backend::DeviceManager::device(this->device_type());
     if (!dev) throw std::runtime_error("item(): device not found");
 
     // Materialize view to a 1-element dense buffer, then copy.
@@ -185,7 +185,7 @@ T Tensor::item() const {
 //     const auto& buf = eval();
 //     std::vector<T> host(this->numel());
 //     if (this->numel() > 0) {
-//         auto dev = backend::DeviceManager::device(this->device());
+//         auto dev = backend::DeviceManager::device(this->device_type());
 //         if (!dev) throw std::runtime_error("to_vector: device not found");
 //         dev->allocator()->copy_device_to_host(host.data(), *buf);
 //     }
@@ -198,7 +198,7 @@ std::vector<T> Tensor::to_vector() const {
     std::vector<T> host(this->numel());
     if (this->numel() == 0) return host;
 
-    auto dev = backend::DeviceManager::device(this->device());
+    auto dev = backend::DeviceManager::device(this->device_type());
     if (!dev) throw std::runtime_error("to_vector: device not found");
 
     auto dense = materialize_buffer();
@@ -212,7 +212,7 @@ cppgrad::Span<const T> Tensor::data_span() const {
     // const auto& buf = schedule();
     const auto& buf = eval();
 
-    if (buf->device() != backend::DeviceType::CPU) {
+    if (buf->device_type() != backend::DeviceType::CPU) {
         throw std::runtime_error("data_span: only valid for CPU tensors. Use to_vector()/item() for device tensors.");
     }
 

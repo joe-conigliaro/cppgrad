@@ -26,19 +26,19 @@ public:
            size_t out_features,
            bool use_bias = true,
            Init init = Init::Default,
-           backend::DeviceType device = backend::DeviceManager::default_device()) {
+           backend::DeviceType device_type = backend::DeviceManager::default_device_type()) {
 
         auto [w_min, w_max, use_uniform, stddev] = limits_for_init(init, in_features, out_features);
 
         // Initializers as graphs
         auto w_init = use_uniform
-            ? ir::uniform({in_features, out_features}, w_min, w_max, device)
-            : ir::normal({in_features, out_features}, 0.0f, stddev, device);
+            ? ir::uniform({in_features, out_features}, w_min, w_max, device_type)
+            : ir::normal({in_features, out_features}, 0.0f, stddev, device_type);
 
         utils::Ref<ir::Tensor> b_init;
         if (use_bias) {
             float bias_bound = 1.0f / std::sqrt(static_cast<float>(in_features));
-            b_init = ir::uniform({1, out_features}, -bias_bound, bias_bound, device);
+            b_init = ir::uniform({1, out_features}, -bias_bound, bias_bound, device_type);
         }
 
         // Convert initializers into canonical leaf parameters

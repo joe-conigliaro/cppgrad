@@ -16,8 +16,8 @@ class DeviceManager {
 public:
     static DeviceManager& instance();
     static Device* device(enum DeviceType type);
-    static DeviceType default_device();
-    static void set_default_device(enum DeviceType type);
+    static DeviceType default_device_type();
+    static void set_default_device_type(enum DeviceType type);
 
     // Deleted copy constructor & assignment operator (enforce singleton pattern).
     DeviceManager(const DeviceManager&) = delete;
@@ -29,7 +29,7 @@ public:
 private:
     DeviceManager() = default;
     std::map<DeviceType, std::unique_ptr<Device>> _devices;
-    enum DeviceType _default_device = DeviceType::CPU;
+    enum DeviceType _default_device_type = DeviceType::CPU;
     static std::mutex _mutex;
 };
 

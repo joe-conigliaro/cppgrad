@@ -16,12 +16,12 @@ inline void copy(Buffer& dst, const Buffer& src) {
     if (src.dtype() != dst.dtype() || src.size_bytes() != dst.size_bytes())
         throw std::runtime_error("backend::copy: dtype/size mismatch");
 
-    auto* src_dev = DeviceManager::device(src.device());
-    auto* dst_dev = DeviceManager::device(dst.device());
+    auto* src_dev = DeviceManager::device(src.device_type());
+    auto* dst_dev = DeviceManager::device(dst.device_type());
     if (!src_dev || !dst_dev) throw std::runtime_error("backend::copy: device not found");
 
     // Same-device copy.
-    if (src.device() == dst.device()) {
+    if (src.device_type() == dst.device_type()) {
         src_dev->allocator()->copy_device_to_device(dst, src);
         return;
     }

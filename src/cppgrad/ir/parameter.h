@@ -15,17 +15,17 @@ namespace cppgrad {
 namespace ir {
 
 // Create a leaf parameter. Storage can be allocated now or deferred until first assign or eval.
-inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape, cppgrad::backend::DeviceType device = cppgrad::backend::DeviceManager::default_device(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32, bool allocate_now = true) {
+inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape, cppgrad::backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32, bool allocate_now = true) {
     std::shared_ptr<cppgrad::backend::Buffer> storage = nullptr;
     if (allocate_now) {
-        auto* device_obj = cppgrad::backend::DeviceManager::device(device);
+        auto* device_obj = cppgrad::backend::DeviceManager::device(device_type);
         if (!device_obj) throw std::runtime_error("parameter: device not found");
         storage = device_obj->allocator()->allocate(cppgrad::utils::vector::numel(shape), dtype);
     } else {
         // deferred allocation
         storage = nullptr;
     }
-    auto param = Tensor::make_leaf(storage, shape, device, dtype);
+    auto param = Tensor::make_leaf(storage, shape, device_type, dtype);
     // Leaf parameter must be leaf op; set requires_grad true
     param->set_requires_grad(true);
 
@@ -52,7 +52,7 @@ inline utils::Ref<Tensor> parameterize(const utils::Ref<Tensor>& t) {
     auto buf = t->eval();
     if (!buf) throw std::runtime_error("parameterize: realization failed (null buffer)");
 
-    auto param = Tensor::make_leaf(buf, t->shape(), t->device(), t->dtype());
+    auto param = Tensor::make_leaf(buf, t->shape(), t->device_type(), t->dtype());
     param->set_requires_grad(true);
 
     if (!param->is_canonical_leaf()) throw std::runtime_error("parameterize: non-canonical leaf");

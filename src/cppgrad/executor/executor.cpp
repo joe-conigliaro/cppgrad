@@ -26,7 +26,7 @@ std::vector<Executor::DeviceSchedule>
 Executor::build_device_schedules(
     const std::vector<utils::Ref<const ir::Tensor>>& outs) {
     std::unordered_map<backend::DeviceType, std::vector<utils::Ref<const ir::Tensor>>> outs_by_dev;
-    for (const auto& o : outs) if (o) outs_by_dev[o->device()].push_back(o);
+    for (const auto& o : outs) if (o) outs_by_dev[o->device_type()].push_back(o);
 
     std::vector<DeviceSchedule> schedules;
     schedules.reserve(outs_by_dev.size());
