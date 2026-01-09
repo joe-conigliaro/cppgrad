@@ -5,7 +5,7 @@ set -eu
 # Config
 : "${CXX:=clang++}"
 : "${DEBUG:=false}"
-: "${CPPGRAD_DEBUG:=}"
+: "${CPPGRAD_DEBUG:=false}"
 
 : "${CXXFLAGS:=-std=c++17}"
 : "${OBJCXXFLAGS:=-fobjc-arc}"
@@ -28,14 +28,8 @@ case "$(uname -s)" in
 esac
 
 # Defines
-if [ -n "$CPPGRAD_DEBUG" ]; then
-    COMMON_DEFS="$COMMON_DEFS -DCPPGRAD_DEBUG=$CPPGRAD_DEBUG"
-else
-    if [ "$DEBUG" = "true" ]; then
-        COMMON_DEFS="$COMMON_DEFS -DCPPGRAD_DEBUG=1"
-    else
-        COMMON_DEFS="$COMMON_DEFS -DCPPGRAD_DEBUG=0"
-    fi
+if [ "$DEBUG" = "true" ] || [ "$CPPGRAD_DEBUG" = "true" ]; then
+    COMMON_DEFS="$COMMON_DEFS -DCPPGRAD_DEBUG=1"
 fi
 
 # Flags
