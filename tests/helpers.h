@@ -28,7 +28,6 @@ static int g_fail_count = 0;
 
 #define TEST_HEADER(name) std::cout << "\n=== " << name << " ===\n"
 
-// New: array allclose with atol/rtol
 struct Tolerances {
     double atol = 1e-6;
     double rtol = 1e-5;
@@ -40,18 +39,17 @@ inline bool allclose(const float* a, const float* b, size_t n, const Tolerances&
         const float aa = a[i];
         const float bb = b[i];
 
-        const bool aa_nan = std::isnan(aa);
-        const bool bb_nan = std::isnan(bb);
-
-        // Treat NaN == NaN as equal for testing purposes
-        if (aa_nan || bb_nan) {
-            if (aa_nan && bb_nan) continue; // both NaN -> OK
-            if (bad_idx) *bad_idx = i;
-            if (got) *got = aa;
-            if (exp) *exp = bb;
-            if (abs_err) *abs_err = std::numeric_limits<float>::quiet_NaN();
-            return false;
-        }
+        // const bool aa_nan = std::isnan(aa);
+        // const bool bb_nan = std::isnan(bb);
+        // // Treat NaN == NaN as equal for testing purposes
+        // if (aa_nan || bb_nan) {
+        //     if (aa_nan && bb_nan) continue; // both NaN -> OK
+        //     if (bad_idx) *bad_idx = i;
+        //     if (got) *got = aa;
+        //     if (exp) *exp = bb;
+        //     if (abs_err) *abs_err = std::numeric_limits<float>::quiet_NaN();
+        //     return false;
+        // }
 
         const double diff = std::fabs(double(aa) - double(bb));
         const double thr  = tol.atol + tol.rtol * std::fabs(double(bb));
@@ -82,7 +80,7 @@ inline void print_mismatch(const std::string& tag, size_t idx, float got, float 
     g_fail_count++;
 }
 
-// New: convenience EXPECT_ALLCLOSE that uses allclose and reports the first mismatch
+// Convenience macro that uses allclose and reports the first mismatch
 #define EXPECT_ALLCLOSE(ptr_a, ptr_b, n, tol, tag) do { \
     size_t _bad=0; float _got=0, _exp=0, _err=0; \
     if (!allclose((ptr_a), (ptr_b), (n), (tol), &_bad, &_got, &_exp, &_err)) { \
@@ -90,7 +88,7 @@ inline void print_mismatch(const std::string& tag, size_t idx, float got, float 
     } \
 } while(0)
 
-// New: simple random filler (deterministic)
+// Simple random filler (deterministic)
 inline void fill_random(std::vector<float>& v, float lo=-1.0f, float hi=1.0f, unsigned seed=123) {
     uint32_t x = seed;
     auto rnd = [&]() {
