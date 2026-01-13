@@ -56,17 +56,17 @@ private:
     size_t _generation = 1; // start at 1. 0 reserved for heap tensors.
     static thread_local int s_scope_depth;
 
-    friend class AutoGraphScope;
+    friend class GraphScope;
 };
 
 // RAII-scoped graph lifetime
-class AutoGraphScope {
+class GraphScope {
 public:
-    AutoGraphScope();
-    ~AutoGraphScope();
+    GraphScope();
+    ~GraphScope();
 
-    AutoGraphScope(const AutoGraphScope&) = delete;
-    AutoGraphScope& operator=(const AutoGraphScope&) = delete;
+    GraphScope(const GraphScope&) = delete;
+    GraphScope& operator=(const GraphScope&) = delete;
 
     static void flush();
 };

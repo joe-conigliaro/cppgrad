@@ -18,6 +18,7 @@
 #include "cppgrad/utils/ref.h"
 #include "cppgrad/ir/storage_view.h"
 #include "cppgrad/ir/access_meta.h"
+#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/ops.h"
 
 namespace cppgrad::utils { class Arena; }
@@ -31,9 +32,15 @@ class GraphContext;
 class Tensor : public utils::RefCounted {
 public:
     // Factory methods
-    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    static utils::Ref<Tensor> make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    static utils::Ref<Tensor> make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
 
     // Properties
     const std::vector<size_t>& shape() const noexcept;
@@ -106,9 +113,15 @@ public:
     }
 
 private:
-    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+    Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
+        backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
 
     utils::Ref<Tensor> self() {
         return utils::Ref<Tensor>(this);
@@ -121,9 +134,13 @@ private:
     }
 
     void compute_requires_grad() {
-        bool req = false;
-        for (const auto& c : _children) if (c && c->requires_grad()) { req = true; break; }
-        _requires_grad = req;
+        if (!GradMode::enabled || !ir::is_differentiable(_op)) {
+            _requires_grad = false;
+            return;
+        }
+        bool req_grad = false;
+        for (const auto& c : _children) if (c && c->requires_grad()) { req_grad = true; break; }
+        _requires_grad = req_grad;
     }
 
     StorageView _sv;

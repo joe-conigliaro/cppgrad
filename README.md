@@ -8,8 +8,8 @@ A small C++17 autograd + neural-network library.
 
 - **IR-style graph**: Ops create new `Tensor` nodes with child links.
 - **Intrusive ref counting**: Graph ownership via `utils::Ref<T>`.
-- **Batch realization**: `GraphContext` / `AutoGraphScope` batches execution.
-- **Arena Allocation**: Arena allocation when `AutoGraphScope` is active, otherwise falls back to heap.
+- **Batch realization**: `GraphContext` / `GraphScope` batches execution.
+- **Arena Allocation**: Allocate in arena when `GraphScope` is active, otherwise falls back to heap.
 - **View-based layouts**: `AccessMeta` encodes `shape/strides/offset` for zero-copy movement ops.
 - **Materialization when needed**: `contiguous()` (and copy paths) produce dense `offset=0` buffers.
 - **Multiple backends**: CPU + Metal.
@@ -54,7 +54,7 @@ int main() {
 
     for (int step = 0; step < 100; ++step) {
         // One scope per step: builds a graph, then batch-realizes at scope exit.
-        ir::AutoGraphScope scope;
+        ir::GraphScope scope;
 
         // Forward: yhat = x*w + b
         auto yhat = ir::add(ir::mul(x, w), b);

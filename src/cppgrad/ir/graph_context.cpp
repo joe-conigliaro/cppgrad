@@ -42,14 +42,14 @@ void GraphContext::reset() {
     if (_generation == 0) _generation = 1;
 }
 
-AutoGraphScope::AutoGraphScope() {
+GraphScope::GraphScope() {
     if (GraphContext::s_scope_depth == 0) {
         GraphContext::instance().reset();
     }
     GraphContext::s_scope_depth++;
 }
 
-AutoGraphScope::~AutoGraphScope() {
+GraphScope::~GraphScope() {
     GraphContext::s_scope_depth--;
     if (GraphContext::s_scope_depth == 0) {
         GraphContext::instance().realize_all();
@@ -57,7 +57,7 @@ AutoGraphScope::~AutoGraphScope() {
     }
 }
 
-void AutoGraphScope::flush() {
+void GraphScope::flush() {
     GraphContext::instance().realize_all();
 }
 

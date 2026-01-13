@@ -27,7 +27,7 @@ int main() {
 
     for (int step = 0; step < 100; ++step) {
         // One scope per step: builds a graph, then batch-realizes at scope exit.
-        ir::AutoGraphScope scope;
+        ir::GraphScope scope;
 
         // Forward: yhat = x*w + b
         auto yhat = ir::add(ir::mul(x, w), b);

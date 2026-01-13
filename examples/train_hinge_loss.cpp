@@ -58,7 +58,7 @@ int main() {
     auto tic = [](){ return std::chrono::high_resolution_clock::now(); };
     auto ms = [](auto t0, auto t1){ return std::chrono::duration<double, std::milli>(t1 - t0).count(); };
     for (int e = 1; e <= 300; ++e) {
-        ir::AutoGraphScope scope;
+        ir::GraphScope scope;
         auto t0 = tic();
         auto logits = forward(xs);
         auto loss = nn::functional::hinge_loss(logits, ys, 1.0f);

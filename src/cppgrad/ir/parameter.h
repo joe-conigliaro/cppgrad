@@ -15,7 +15,9 @@ namespace cppgrad {
 namespace ir {
 
 // Create a leaf parameter. Storage can be allocated now or deferred until first assign or eval.
-inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape, cppgrad::backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(), cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32, bool allocate_now = true) {
+inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape,
+    cppgrad::backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
+    cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32, bool allocate_now = true) {
     std::shared_ptr<cppgrad::backend::Buffer> storage = nullptr;
     if (allocate_now) {
         auto* device_obj = cppgrad::backend::DeviceManager::device(device_type);

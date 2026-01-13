@@ -67,7 +67,7 @@ int main() {
     std::cout << "\n--- Starting Training ---" << std::endl;
     auto start = std::chrono::steady_clock::now();
     for (int e = 0; e < epochs; ++e) {
-        ir::AutoGraphScope scope;
+        ir::GraphScope scope;
         // auto logits = (*model)(xs);
         auto logits = model(xs);
         // auto logits = model->forward(xs);

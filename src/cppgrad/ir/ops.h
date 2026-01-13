@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <variant>
+#include <type_traits>
 
 namespace cppgrad {
 namespace ir {
@@ -19,12 +20,10 @@ struct ConstantOp { ConstantOpType type; double value = 0.0; };
 // Represents a pre-existing buffer. The root of a graph.
 struct LeafOp {};
 
-// Operation for device-to-device data transfer.
+// Copy Operation (produces a new output tensor). Can cross devices.
 struct CopyOp {};
 
-// Represents an in-place assignment (mutation).
-// Unlike CopyOp, this operation does NOT allocate a new buffer for the result.
-// Instead, it overwrites the underlying buffer of the first child (destination).
+// In-place assignment (mutates existing tensor). Same-device only.
 // Used primarily for parameter updates in optimizers (e.g., w -= lr * grad).
 struct AssignOp {};
 
@@ -126,9 +125,35 @@ inline const char* to_string(const Op& op_v) {
     }, op_v);
 }
 
-// Helper to check if an op is naturally a "start" of a graph
+// Check if `Op` is a start node.
+// Comptime.
+template <class T>
+inline constexpr bool is_start_node_v =
+    std::is_same_v<std::decay_t<T>, ConstantOp> ||
+    std::is_same_v<std::decay_t<T>, RandomOp>   ||
+    std::is_same_v<std::decay_t<T>, LeafOp>;
+// Runtime.
 inline bool is_start_node(const Op& op_v) {
-    return std::holds_alternative<ConstantOp>(op_v) || std::holds_alternative<LeafOp>(op_v) || std::holds_alternative<RandomOp>(op_v);
+    return std::visit([](auto&& op) {
+        using T = std::decay_t<decltype(op)>;
+        return is_start_node_v<T>;
+    }, op_v);
+}
+
+// Check if `Op` supports autograd (has a backward rule).
+// Comptime.
+template <class T>
+inline constexpr bool is_differentiable_v =
+    !std::is_same_v<std::decay_t<T>, ConstantOp> &&
+    !std::is_same_v<std::decay_t<T>, RandomOp>   &&
+    !std::is_same_v<std::decay_t<T>, LeafOp>     &&
+    !std::is_same_v<std::decay_t<T>, AssignOp>;
+// Runtime.
+inline bool is_differentiable(const Op& op_v) {
+    return std::visit([](auto&& op) {
+        using T = std::decay_t<decltype(op)>;
+        return is_differentiable_v<T>;
+    }, op_v);
 }
 
 } // namespace ir

@@ -29,10 +29,14 @@ static utils::Ref<Tensor> binary(BinaryOpType op, const utils::Ref<const Tensor>
 // Public API
 
 utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<const Tensor>& src) {
+    if (ir::GradMode::enabled) throw std::runtime_error(
+        "assign: forbidden in grad mode (AssignOp is a non-differentiable in-place update). "
+        "Wrap optimizer updates in `ir::NoGradScope`.");
     if (!dst->is_canonical_leaf()) throw std::runtime_error("assign: dst tensor is not a canonical leaf");
     if (dst->shape() != src->shape()) throw std::runtime_error("assign: shape mismatch");
     if (dst->dtype() != src->dtype()) throw std::runtime_error("assign: dtype mismatch");
-    if (dst->device_type() != src->device_type()) throw std::runtime_error("assign: device mismatch (use `src.to(dst->device_type())` first)");
+    if (dst->device_type() != src->device_type()) throw std::runtime_error(
+        "assign: device mismatch (use `src.to(dst->device_type())` first)");
     return Tensor::make(AssignOp{}, {dst, src}, dst->shape(), dst->device_type(), dst->dtype());
 }
 

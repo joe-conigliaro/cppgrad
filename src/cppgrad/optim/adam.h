@@ -7,6 +7,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/graph_context.h"
+#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/optim/optim.h"
 
 namespace cppgrad {
@@ -20,6 +21,8 @@ public:
     }
 
     void step() override {
+        ir::NoGradScope _ngs;
+
         ++_t;
         const float b1t = std::pow(_beta1, _t);
         const float b2t = std::pow(_beta2, _t);

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "cppgrad/optim/optim.h"
+#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/tensor_operators.h"
 
 namespace cppgrad {
@@ -13,6 +14,8 @@ public:
     using Optimizer::Optimizer;
 
     void step() override {
+        ir::NoGradScope _ngs;
+
         for (auto& p : _params) {
             if (p->grad()) {
                 // Build the lazy graph for the update.

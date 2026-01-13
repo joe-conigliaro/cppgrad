@@ -22,9 +22,6 @@ public:
     void realize_many(const std::vector<utils::Ref<const ir::Tensor>>& outs) override;
 
     void realize_scheduled(const std::vector<DeviceSchedule>& schedules);
-
-    // Helpers
-    static bool is_contiguous(const ir::AccessMeta& acc);
 };
 
 } // namespace interpreter

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
 #include <iostream>
+#include "cppgrad/ir/ops.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/storage_view.h"
@@ -23,7 +24,7 @@ static size_t generation_id() {
 static void warn_no_auto_graph_scope() {
     static bool warned = false;
     if (!warned) {
-        std::cerr << "[WARNING] cppgrad: Creating graph nodes outside of an AutoGraphScope.\n"
+        std::cerr << "[WARNING] cppgrad: Creating graph nodes outside of an GraphScope.\n"
                 << "          - Tensors are being allocated on the Heap.\n"
                 << "          - Memory will be managed via Ref-counting (RAII) instead of Arena Allocation.\n"
                 << "          - Ensure you do not mix dead Arena tensors with Heap tensors.\n";
@@ -49,10 +50,16 @@ std::shared_ptr<backend::Buffer> Tensor::materialize_buffer() const {
 
 // Overload 1: Shape-based
 // Used by: Compute Ops (Add, Mul, MatMul) and RandomOp
-utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
-    // Fast Path: Inside AutoGraphScope -> Arena Allocation
+utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children,
+    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
+    // Fast Path: Inside GraphScope -> Arena Allocation
     if (GraphContext::active()) {
-        return GraphContext::instance().make_node(std::move(op), std::move(children), shape, device_type, dtype);
+        return GraphContext::instance().make_node(
+            std::move(op),
+            std::move(children),
+            shape,
+            device_type,
+            dtype);
     }
 
     // Slow Path: Heap Allocation (Fallback)
@@ -68,8 +75,9 @@ utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> chi
 
 // Overload 2: AccessMeta-based
 // Used by: View Ops (Reshape, Slice, Permute, Broadcast)
-utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type, backend::DType dtype) {
-    // Fast Path: Inside AutoGraphScope -> Arena Allocation
+utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children,
+    const AccessMeta& access, backend::DeviceType device_type, backend::DType dtype) {
+    // Fast Path: Inside GraphScope -> Arena Allocation
     if (GraphContext::active()) {
         return GraphContext::instance().make_node(std::move(op), std::move(children), access, device_type, dtype);
     }
@@ -84,7 +92,8 @@ utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> chi
     return utils::Ref<Tensor>(new Tensor(std::move(op), std::move(children), access, device_type, dtype));
 }
 
-utils::Ref<Tensor> Tensor::make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
+utils::Ref<Tensor> Tensor::make_leaf(std::shared_ptr<backend::Buffer> data,
+    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
     return utils::Ref<Tensor>(new Tensor(std::move(data), shape, device_type, dtype));
 }
 
@@ -94,14 +103,15 @@ void Tensor::check_liveness(const char* caller_name) const {
     // If gen > 0, it must match the current context generation.
     size_t current_gen = GraphContext::instance().generation();
     if (_generation_id != current_gen) {
-        std::string msg = "Tensor Error: Accessing a tensor from a closed/reset AutoGraphScope (Generation mismatch). ";
+        std::string msg = "Tensor Error: Accessing a tensor from a closed/reset GraphScope (Generation mismatch). ";
         msg += "Tensor Gen: " + std::to_string(_generation_id) + ", Current Gen: " + std::to_string(current_gen);
         msg += ". Operation: " + std::string(caller_name);
         throw std::runtime_error(msg);
     }
 }
 
-Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype)
+Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children,
+    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype)
     : _op(std::move(op)), _children(std::move(children)), _device_type(device_type), _dtype(dtype) {
     _sv.buffer = nullptr;
     _sv.access_meta = AccessMeta::contiguous_from(shape, 0);
@@ -109,7 +119,8 @@ Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std:
     compute_requires_grad();
 }
 
-Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access, backend::DeviceType device_type, backend::DType dtype)
+Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
+    backend::DeviceType device_type, backend::DType dtype)
     : _op(std::move(op)), _children(std::move(children)), _device_type(device_type), _dtype(dtype) {
     _sv.buffer = nullptr;
     _sv.access_meta = access;
@@ -118,7 +129,8 @@ Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const Acce
     compute_requires_grad();
 }
 
-Tensor::Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype)
+Tensor::Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
+    backend::DeviceType device_type, backend::DType dtype)
     : _op(LeafOp{}), _children(), _device_type(device_type), _dtype(dtype) {
     _sv = StorageView::contiguous_from(std::move(data), shape, 0);
     _generation_id = generation_id();
@@ -139,7 +151,7 @@ void Tensor::set_access_meta(AccessMeta m) {
     _sv.access_meta.recompute_contiguity();
 }
 
-// If `GraphContext` (`AutoGraphScope`) is active then schedule batched realization.
+// If `GraphContext` (`GraphScope`) is active then schedule batched realization.
 // Otherwise realize now through `eval()`.
 std::shared_ptr<backend::Buffer> Tensor::schedule() const {
     check_liveness("Tensor::schedule");
@@ -299,9 +311,19 @@ broadcast_to_shape_dbg(utils::Ref<Tensor> g,
     #endif
     utils::Ref<Tensor> src = g;
     if (g->shape() != g_aligned) {
-        src = Tensor::make(MovementOp{MovementOpType::RESHAPE, g_aligned}, {g}, g_aligned, g->device_type(), g->dtype());
+        src = Tensor::make(
+            MovementOp{MovementOpType::RESHAPE, g_aligned},
+            {g},
+            g_aligned,
+            g->device_type(),
+            g->dtype());
     }
-    return Tensor::make(MovementOp{MovementOpType::BROADCAST, target}, {src}, target, g->device_type(), g->dtype());
+    return Tensor::make(
+        MovementOp{MovementOpType::BROADCAST, target},
+        {src},
+        target,
+        g->device_type(),
+        g->dtype());
 }
 
 static utils::Ref<Tensor>
@@ -347,7 +369,12 @@ broadcast_grad_for_sum_backward(const utils::Ref<Tensor>& grad_this,
         if (g->shape() != kd_shape) g = reshape(g, kd_shape);
     }
     // Broadcast singleton dims back to input shape
-    g = Tensor::make(MovementOp{MovementOpType::BROADCAST, in_shape}, {g}, AccessMeta::broadcast_from(g->access_meta(), in_shape), g->device_type(), g->dtype());
+    g = Tensor::make(
+        MovementOp{MovementOpType::BROADCAST, in_shape},
+        {g},
+        AccessMeta::broadcast_from(g->access_meta(), in_shape),
+        g->device_type(),
+        g->dtype());
 
     return g;
 }
@@ -394,7 +421,12 @@ static utils::Ref<Tensor> reduce_to_shape_sum(utils::Ref<Tensor> g, const std::v
         axes.erase(std::unique(axes.begin(), axes.end()), axes.end());
         auto target_aligned = ta;
         for (int ax : axes) target_aligned[(size_t)ax] = 1;
-        g = Tensor::make(ReduceOp{ReduceOpType::SUM, axes, /*keep_dims=*/true}, {g}, target_aligned, g->device_type(), g->dtype());
+        g = Tensor::make(
+            ReduceOp{ReduceOpType::SUM, axes, /*keep_dims=*/true},
+            {g},
+            target_aligned,
+            g->device_type(),
+            g->dtype());
     }
 
     return g;
@@ -478,6 +510,7 @@ void Tensor::backward() {
     visited.reserve(256);
     std::function<void(const Tensor*)> dfs = [&](const Tensor* t) {
         if (!t || visited.count(t)) return;
+        if (!t->requires_grad()) return;
         visited.insert(t);
         for (const auto& c : t->children()) dfs(c.get());
         tape.push_back(t);
@@ -490,7 +523,12 @@ void Tensor::backward() {
     incoming.reserve(tape.size());
 
     // Seed grad (scalar one)
-    incoming[this] = Tensor::make(ConstantOp{ConstantOpType::SCALAR, 1.0}, {}, std::vector<size_t>{}, device_type(), dtype());
+    incoming[this] = Tensor::make(
+        ConstantOp{ConstantOpType::SCALAR, 1.0},
+        {},
+        std::vector<size_t>{},
+        device_type(),
+        dtype());
 
     // Reverse sweep
     for (auto it = tape.rbegin(); it != tape.rend(); ++it) {
@@ -519,32 +557,83 @@ void Tensor::backward() {
 
                 switch (op.type) {
                     case UnaryOpType::RELU: {
-                        auto zero = Tensor::make(ConstantOp{ConstantOpType::FULL, 0.0}, {}, x->shape(), x->device_type(), x->dtype());
-                        auto mask = Tensor::make(BinaryOp{BinaryOpType::CMP_GT}, {utils::Ref<const Tensor>(node), zero}, node->shape(), node->device_type(), node->dtype());
-                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, mask}, node->shape(), node->device_type(), node->dtype());
+                        auto zero = Tensor::make(
+                            ConstantOp{ConstantOpType::FULL, 0.0},
+                            {},
+                            x->shape(),
+                            x->device_type(),
+                            x->dtype());
+                        auto mask = Tensor::make(
+                            BinaryOp{BinaryOpType::CMP_GT},
+                            {utils::Ref<const Tensor>(node), zero},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, mask},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         parent_grads = {g};
                         break;
                     }
                     case UnaryOpType::EXP: {
-                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, utils::Ref<const Tensor>(node)}, node->shape(), node->device_type(), node->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, utils::Ref<const Tensor>(node)},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         parent_grads = {g};
                         break;
                     }
                     case UnaryOpType::LOG: {
-                        auto g = Tensor::make(BinaryOp{BinaryOpType::DIV}, {grad_this, x}, x->shape(), x->device_type(), x->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::DIV},
+                            {grad_this, x},
+                            x->shape(),
+                            x->device_type(),
+                            x->dtype());
                         parent_grads = {g};
                         break;
                     }
                     case UnaryOpType::NEG: {
-                        auto g = Tensor::make(UnaryOp{UnaryOpType::NEG}, {grad_this}, grad_this->shape(), grad_this->device_type(), grad_this->dtype());
+                        auto g = Tensor::make(
+                            UnaryOp{UnaryOpType::NEG},
+                            {grad_this},
+                            grad_this->shape(),
+                            grad_this->device_type(),
+                            grad_this->dtype());
                         parent_grads = {g};
                         break;
                     }
                     case UnaryOpType::TANH: {
-                        auto one = Tensor::make(ConstantOp{ConstantOpType::FULL, 1.0}, {}, node->shape(), node->device_type(), node->dtype());
-                        auto out2 = Tensor::make(BinaryOp{BinaryOpType::MUL}, {utils::Ref<const Tensor>(node), utils::Ref<const Tensor>(node)}, node->shape(), node->device_type(), node->dtype());
-                        auto local = Tensor::make(BinaryOp{BinaryOpType::SUB}, {one, out2}, node->shape(), node->device_type(), node->dtype());
-                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, local}, node->shape(), node->device_type(), node->dtype());
+                        auto one = Tensor::make(
+                            ConstantOp{ConstantOpType::FULL, 1.0},
+                            {},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto out2 = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {utils::Ref<const Tensor>(node), utils::Ref<const Tensor>(node)},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype()
+                        );
+                        auto local = Tensor::make(
+                            BinaryOp{BinaryOpType::SUB},
+                            {one, out2},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, local},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         parent_grads = {g};
                         break;
                     }
@@ -562,39 +651,117 @@ void Tensor::backward() {
                     }
                     case BinaryOpType::SUB: {
                         ga = reduce_grad_to_parent(grad_this, a->shape());
-                        auto neg_g = Tensor::make(UnaryOp{UnaryOpType::NEG}, {grad_this}, grad_this->shape(), grad_this->device_type(), grad_this->dtype());
+                        auto neg_g = Tensor::make(
+                            UnaryOp{UnaryOpType::NEG},
+                            {grad_this},
+                            grad_this->shape(),
+                            grad_this->device_type(),
+                            grad_this->dtype());
                         gb = reduce_grad_to_parent(neg_g, b->shape());
                         break;
                     }
                     case BinaryOpType::MUL: {
-                        auto ga_raw = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, b}, node->shape(), node->device_type(), node->dtype());
+                        auto ga_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, b}, node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         ga = reduce_grad_to_parent(ga_raw, a->shape());
-                        auto gb_raw = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, a}, node->shape(), node->device_type(), node->dtype());
+                        auto gb_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, a},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         gb = reduce_grad_to_parent(gb_raw, b->shape());
                         break;
                     }
                     case BinaryOpType::DIV: {
-                        auto ga_raw = Tensor::make(BinaryOp{BinaryOpType::DIV}, {grad_this, b}, node->shape(), node->device_type(), node->dtype());
+                        auto ga_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::DIV},
+                            {grad_this, b},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         ga = reduce_grad_to_parent(ga_raw, a->shape());
-                        auto b2 = Tensor::make(BinaryOp{BinaryOpType::MUL}, {b, b}, b->shape(), b->device_type(), b->dtype());
-                        auto neg_g = Tensor::make(UnaryOp{UnaryOpType::NEG}, {grad_this}, grad_this->shape(), grad_this->device_type(), grad_this->dtype());
-                        auto num = Tensor::make(BinaryOp{BinaryOpType::MUL}, {neg_g, a}, node->shape(), node->device_type(), node->dtype());
-                        auto gb_raw = Tensor::make(BinaryOp{BinaryOpType::DIV}, {num, b2}, node->shape(), node->device_type(), node->dtype());
+                        auto b2 = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {b, b},
+                            b->shape(),
+                            b->device_type(),
+                            b->dtype());
+                        auto neg_g = Tensor::make(
+                            UnaryOp{UnaryOpType::NEG},
+                            {grad_this},
+                            grad_this->shape(),
+                            grad_this->device_type(),
+                            grad_this->dtype());
+                        auto num = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {neg_g, a},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto gb_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::DIV},
+                            {num, b2},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         gb = reduce_grad_to_parent(gb_raw, b->shape());
                         break;
                     }
                     case BinaryOpType::POW: {
-                        // auto one = Tensor::make(ConstantOp{ConstantOpType::FULL, 1.0}, {}, a->shape(), a->device_type(), a->dtype());
-                        auto one = Tensor::make(ConstantOp{ConstantOpType::FULL, 1.0}, {}, b->shape(), b->device_type(), b->dtype());
-                        auto b_minus_1 = Tensor::make(BinaryOp{BinaryOpType::SUB}, {b, one}, b->shape(), b->device_type(), b->dtype());
-                        auto a_pow_bm1 = Tensor::make(BinaryOp{BinaryOpType::POW}, {a, b_minus_1}, node->shape(), a->device_type(), a->dtype());
-                        auto term_a = Tensor::make(BinaryOp{BinaryOpType::MUL}, {b, a_pow_bm1}, node->shape(), a->device_type(), a->dtype());
-                        auto ga_raw = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, term_a}, node->shape(), node->device_type(), node->dtype());
+                        auto one = Tensor::make(
+                            ConstantOp{ConstantOpType::FULL, 1.0},
+                            {},
+                            b->shape(),
+                            b->device_type(),
+                            b->dtype());
+                        auto b_minus_1 = Tensor::make(
+                            BinaryOp{BinaryOpType::SUB},
+                            {b, one},
+                            b->shape(),
+                            b->device_type(),
+                            b->dtype());
+                        auto a_pow_bm1 = Tensor::make(
+                            BinaryOp{BinaryOpType::POW},
+                            {a, b_minus_1},
+                            node->shape(),
+                            a->device_type(),
+                            a->dtype());
+                        auto term_a = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {b, a_pow_bm1},
+                            node->shape(),
+                            a->device_type(),
+                            a->dtype());
+                        auto ga_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, term_a},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         ga = reduce_grad_to_parent(ga_raw, a->shape());
 
-                        auto ln_a = Tensor::make(UnaryOp{UnaryOpType::LOG}, {a},a->shape(), a->device_type(), a->dtype());
-                        auto out_times_ln_a = Tensor::make(BinaryOp{BinaryOpType::MUL}, {utils::Ref<const Tensor>(node), ln_a}, node->shape(), node->device_type(), node->dtype());
-                        auto gb_raw = Tensor::make(BinaryOp{BinaryOpType::MUL}, {grad_this, out_times_ln_a}, node->shape(), node->device_type(), node->dtype());
+                        auto ln_a = Tensor::make(
+                            UnaryOp{UnaryOpType::LOG},
+                            {a},
+                            a->shape(),
+                            a->device_type(),
+                            a->dtype());
+                        auto out_times_ln_a = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {utils::Ref<const Tensor>(node), ln_a},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto gb_raw = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, out_times_ln_a},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
                         gb = reduce_grad_to_parent(gb_raw, b->shape());
                         break;
                     }
@@ -602,7 +769,12 @@ void Tensor::backward() {
                     case BinaryOpType::CMP_GT:
                     case BinaryOpType::MIN:
                     case BinaryOpType::MAX: {
-                        auto zero = Tensor::make(ConstantOp{ConstantOpType::FULL, 0.0}, {}, grad_this->shape(), grad_this->device_type(), grad_this->dtype());
+                        auto zero = Tensor::make(
+                            ConstantOp{ConstantOpType::FULL, 0.0},
+                            {},
+                            grad_this->shape(),
+                            grad_this->device_type(),
+                            grad_this->dtype());
                         ga = zero; gb = zero;
                         break;
                     }
@@ -618,10 +790,31 @@ void Tensor::backward() {
                         break;
                     }
                     case ReduceOpType::MAX: {
-                        auto b_out = Tensor::make(MovementOp{MovementOpType::BROADCAST, x->shape()}, {utils::Ref<const Tensor>(node)}, AccessMeta::broadcast_from(node->access_meta(), x->shape()), x->device_type(), x->dtype());
-                        auto mask = Tensor::make(BinaryOp{BinaryOpType::CMP_EQ}, {x, b_out}, x->shape(), x->device_type(), x->dtype());
-                        auto b_g = Tensor::make(MovementOp{MovementOpType::BROADCAST, x->shape()}, {grad_this}, AccessMeta::broadcast_from(grad_this->access_meta(), x->shape()), grad_this->device_type(), grad_this->dtype());
-                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL}, {b_g, mask}, x->shape(), x->device_type(), x->dtype());
+                        auto b_out = Tensor::make(
+                            MovementOp{MovementOpType::BROADCAST, x->shape()},
+                            {utils::Ref<const Tensor>(node)},
+                            AccessMeta::broadcast_from(node->access_meta(),
+                            x->shape()),
+                            x->device_type(),
+                            x->dtype());
+                        auto mask = Tensor::make(
+                            BinaryOp{BinaryOpType::CMP_EQ},
+                            {x, b_out},
+                            x->shape(),
+                            x->device_type(),
+                            x->dtype());
+                        auto b_g = Tensor::make(
+                            MovementOp{MovementOpType::BROADCAST, x->shape()},
+                            {grad_this},
+                            AccessMeta::broadcast_from(grad_this->access_meta(), x->shape()),
+                            grad_this->device_type(),
+                            grad_this->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {b_g, mask},
+                            x->shape(),
+                            x->device_type(),
+                            x->dtype());
                         parent_grads = {g};
                         break;
                     }
@@ -638,7 +831,12 @@ void Tensor::backward() {
                         const auto& axes = op.arg;
                         std::vector<size_t> undo(axes.size());
                         for (size_t i = 0; i < axes.size(); ++i) undo[axes[i]] = i;
-                        auto gperm = Tensor::make(MovementOp{MovementOpType::PERMUTE, undo}, {grad_this}, AccessMeta::permute_from(grad_this->access_meta(), undo), x->device_type(), x->dtype());
+                        auto gperm = Tensor::make(
+                            MovementOp{MovementOpType::PERMUTE, undo},
+                            {grad_this},
+                            AccessMeta::permute_from(grad_this->access_meta(), undo),
+                            x->device_type(),
+                            x->dtype());
                         parent_grads = {gperm};
                         break;
                     }
@@ -651,7 +849,12 @@ void Tensor::backward() {
                     case MovementOpType::SLICE: {
                         MovementOp slice_op = op;
                         // TODO: proper scatter?
-                        auto scatter = Tensor::make(slice_op, {grad_this}, AccessMeta::slice_from(x->access_meta(), op.slice_begin, op.slice_end, op.arg), x->device_type(), x->dtype());
+                        auto scatter = Tensor::make(
+                            slice_op,
+                            {grad_this},
+                            AccessMeta::slice_from(x->access_meta(), op.slice_begin, op.slice_end, op.arg),
+                            x->device_type(),
+                            x->dtype());
                         parent_grads = {scatter};
                         break;
                     }
@@ -661,18 +864,43 @@ void Tensor::backward() {
                 auto A = children[0];
                 auto B = children[1];
                 auto Xt_axes = std::vector<size_t>{1,0};
-                auto Bt = Tensor::make(MovementOp{MovementOpType::PERMUTE, Xt_axes}, {B}, AccessMeta::permute_from(B->access_meta(), Xt_axes), B->device_type(), B->dtype());
-                auto dA = Tensor::make(MatMulOp{}, std::vector<utils::Ref<const Tensor>>{grad_this, Bt}, {A->shape()[0], A->shape()[1]}, A->device_type(), A->dtype());
-                auto At = Tensor::make(MovementOp{MovementOpType::PERMUTE, Xt_axes}, {A}, AccessMeta::permute_from(A->access_meta(), Xt_axes), A->device_type(), A->dtype());
-                auto dB = Tensor::make(MatMulOp{}, {At, grad_this}, {B->shape()[0], B->shape()[1]}, B->device_type(), B->dtype());
+                auto Bt = Tensor::make(
+                    MovementOp{MovementOpType::PERMUTE, Xt_axes},
+                    {B},
+                    AccessMeta::permute_from(B->access_meta(), Xt_axes),
+                    B->device_type(),
+                    B->dtype());
+                auto dA = Tensor::make(
+                    MatMulOp{},
+                    std::vector<utils::Ref<const Tensor>>{grad_this, Bt},
+                    {A->shape()[0], A->shape()[1]},
+                    A->device_type(),
+                    A->dtype());
+                auto At = Tensor::make(
+                    MovementOp{MovementOpType::PERMUTE, Xt_axes},
+                    {A},
+                    AccessMeta::permute_from(A->access_meta(), Xt_axes),
+                    A->device_type(),
+                    A->dtype());
+                auto dB = Tensor::make(
+                    MatMulOp{},
+                    {At, grad_this},
+                    {B->shape()[0], B->shape()[1]},
+                    B->device_type(),
+                    B->dtype());
                 parent_grads = {dA, dB};
             }
             else if constexpr (std::is_same_v<T, CopyOp>) {
                 auto src = children[0];
-                auto back = Tensor::make(CopyOp{}, {grad_this}, src->shape(), src->device_type(), src->dtype());
+                auto back = Tensor::make(
+                    CopyOp{},
+                    {grad_this},
+                    src->shape(),
+                    src->device_type(),
+                    src->dtype());
                 parent_grads = {back};
             }
-            else if constexpr (std::is_same_v<T, ConstantOp> || std::is_same_v<T, RandomOp> || std::is_same_v<T, LeafOp> || std::is_same_v<T, AssignOp>) {
+            else if constexpr (!ir::is_differentiable_v<T>) {
                 parent_grads = {};
             }
             else {
@@ -693,7 +921,12 @@ void Tensor::backward() {
 
             // accumulate
             auto& slot = incoming[parent.get()];
-            slot = slot ? Tensor::make(BinaryOp{BinaryOpType::ADD}, {slot, pgrad}, slot->shape(), slot->device_type(), slot->dtype()) : pgrad;
+            slot = slot ? Tensor::make(
+                BinaryOp{BinaryOpType::ADD},
+                {slot, pgrad},
+                slot->shape(),
+                slot->device_type(),
+                slot->dtype()) : pgrad;
         }
     }
 
@@ -704,7 +937,12 @@ void Tensor::backward() {
         if (!n->requires_grad()) continue;
 
         if (auto old = n->grad()) {
-            n->set_grad(Tensor::make(BinaryOp{BinaryOpType::ADD}, {old, g}, old->shape(), old->device_type(), old->dtype()));
+            n->set_grad(Tensor::make(
+                BinaryOp{BinaryOpType::ADD},
+                {old, g},
+                old->shape(),
+                old->device_type(),
+                old->dtype()));
         } else {
             n->set_grad(g);
         }
