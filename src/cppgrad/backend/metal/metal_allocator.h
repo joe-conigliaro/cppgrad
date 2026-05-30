@@ -9,12 +9,14 @@ namespace cppgrad {
 namespace backend {
 namespace metal {
 
+// Forward-declare metal execution context
+class MetalExecutionContext;
 // Forward-declare the private implementation struct
 struct MetalAllocatorImpl;
 
 class MetalAllocator : public Allocator {
 public:
-    explicit MetalAllocator(void* native_device);
+    explicit MetalAllocator(void* native_device, MetalExecutionContext* exec_ctx = nullptr);
     ~MetalAllocator() override;
 
     std::shared_ptr<Buffer> allocate(size_t num_elements, DType dtype) override;

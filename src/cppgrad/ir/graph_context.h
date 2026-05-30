@@ -10,8 +10,6 @@
 namespace cppgrad {
 namespace ir {
 
-class Tensor;
-
 // Manages arena allocation and batched realization for a compute scope
 class GraphContext {
 public:

@@ -11,10 +11,14 @@ namespace cppgrad {
 namespace backend {
 namespace metal {
 
+class MetalExecutionContext;
+
 class MetalBackend final : public Backend {
 public:
-    // Construct from native (non-owning) Metal device and queue pointers
-    MetalBackend(void* native_device, void* native_queue);
+    // Construct from native (non-owning) Metal device and queue pointers.
+    // Compute work is batched into the shared execution context and committed at
+    // GraphScope boundaries (or on readback).
+    MetalBackend(void* native_device, void* native_queue, MetalExecutionContext* exec_ctx);
     ~MetalBackend();
 
     // Data Ops
@@ -38,6 +42,8 @@ public:
     // Random
     void rand_uniform(Buffer& out, float min, float max) const override;
     void rand_normal(Buffer& out, float mean, float stddev) const override;
+
+    void flush_pending() const override;
 
 private:
     struct Impl;

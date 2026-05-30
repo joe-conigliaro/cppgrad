@@ -2,6 +2,10 @@
 // https://github.com/joe-conigliaro
 #include "cppgrad/ir/graph_context.h"
 #include "cppgrad/executor/interpreter/interpreter_executor.h"
+#include "cppgrad/backend/device_manager.h"
+#include "cppgrad/backend/device.h"
+#include "cppgrad/backend/backend.h"
+
 namespace cppgrad {
 namespace ir {
 
@@ -42,6 +46,19 @@ void GraphContext::reset() {
     if (_generation == 0) _generation = 1;
 }
 
+// Commit any work the default device has batched (e.g. Metal's execution context),
+// so a scope's GPU work completes at the scope boundary like the CPU backend does.
+static void flush_default_backend() {
+    if (auto* dev = backend::DeviceManager::device(backend::DeviceManager::default_device_type())) {
+        dev->backend()->flush_pending();
+    }
+}
+
+void GraphScope::flush() {
+    GraphContext::instance().realize_all();
+    flush_default_backend();
+}
+
 GraphScope::GraphScope() {
     if (GraphContext::s_scope_depth == 0) {
         GraphContext::instance().reset();
@@ -53,12 +70,9 @@ GraphScope::~GraphScope() {
     GraphContext::s_scope_depth--;
     if (GraphContext::s_scope_depth == 0) {
         GraphContext::instance().realize_all();
+        flush_default_backend();
         GraphContext::instance().reset();
     }
-}
-
-void GraphScope::flush() {
-    GraphContext::instance().realize_all();
 }
 
 } // namespace ir

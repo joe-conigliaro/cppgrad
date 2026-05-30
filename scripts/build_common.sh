@@ -66,8 +66,8 @@ METALLIB_PATH=""
 # Metal Compilation on Apple
 if [ "$ON_APPLE" = "true" ]; then
     echo "Apple platform detected. Preparing Metal backend..."
-    CXXFLAGS="$CXXFLAGS -DCPPGRAD_WITH_METAL=1 -DCPPGRAD_ON_APPLE=1"
     if command -v xcrun >/dev/null 2>&1; then
+        CXXFLAGS="$CXXFLAGS -DCPPGRAD_WITH_METAL"
         LIB_MM_SOURCES=$(find src/cppgrad/backend/metal -name '*.mm' 2>/dev/null || true)
         LIB_METAL_SOURCES=$(find src/cppgrad/backend/metal -name '*.metal' 2>/dev/null || true)
 
@@ -76,7 +76,7 @@ if [ "$ON_APPLE" = "true" ]; then
     mkdir -p "$METAL_BUILD_DIR"
 
     if [ -n "$LIB_METAL_SOURCES" ]; then
-        METAL_AIRS=""
+        METAL_AIRS=()
 
       for msrc in $LIB_METAL_SOURCES; do
           base=$(basename "$msrc" .metal)
@@ -85,17 +85,15 @@ if [ "$ON_APPLE" = "true" ]; then
         echo "Compiling Metal: $msrc -> $air"
         xcrun -sdk macosx metal -std=macos-metal2.3 -O3 -c "$msrc" -o "$air"
 
-        METAL_AIRS="$METAL_AIRS $air"
+        METAL_AIRS+=("$air")
       done
 
       echo "Linking Metal AIRs into metallib: $METALLIB_PATH"
-      xcrun -sdk macosx metallib $METAL_AIRS -o "$METALLIB_PATH"
+      xcrun -sdk macosx metallib "${METAL_AIRS[@]}" -o "$METALLIB_PATH"
     fi
     else
         echo "Warning: xcrun not found; Metal backend will be disabled."
-        CXXFLAGS="$CXXFLAGS -DCPPGRAD_WITH_METAL=0"
     fi
 else
     echo "Non-Apple platform detected. Metal backend will be disabled."
-    CXXFLAGS="$CXXFLAGS -DCPPGRAD_WITH_METAL=0"
 fi

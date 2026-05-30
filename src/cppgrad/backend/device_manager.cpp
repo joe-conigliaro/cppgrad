@@ -2,17 +2,8 @@
 // https://github.com/joe-conigliaro
 #include <iostream>
 #include "cppgrad/backend/device_manager.h"
-#include "cppgrad/backend/cpu/cpu_backend.h"
-#include "cppgrad/backend/cpu/cpu_allocator.h"
-#include "cppgrad/backend/cpu/cpu_registration.h"
-#include "cppgrad/executor/interpreter/interpreter_executor.h"
 
-// Forward declare mm function.
-#ifdef CPPGRAD_ON_APPLE
-namespace cppgrad::backend::metal {
-void register_device();
-}
-#endif
+// Backends self-register at static-initialization time (see each backend's *_registration.{cpp,mm}).
 
 namespace cppgrad {
 namespace backend {
@@ -61,16 +52,14 @@ void DeviceManager::register_device(std::unique_ptr<Device> device) {
 }
 
 void DeviceManager::init() {
-    cpu::register_device();
-    #ifdef CPPGRAD_ON_APPLE
-        metal::register_device();
-    #endif
-    set_default_device_type(DeviceType::CPU);
+    // Devices have already self-registered (static init). Just choose the default:
+    // prefer the Metal accelerator when present, otherwise CPU.
     // if (_devices.count(DeviceType::METAL)) {
     //     set_default_device_type(DeviceType::METAL);
     // } else {
     //     set_default_device_type(DeviceType::CPU);
     // }
+    set_default_device_type(DeviceType::CPU);
 }
 
 } // namespace backend
