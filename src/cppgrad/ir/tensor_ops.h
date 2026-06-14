@@ -17,6 +17,8 @@ utils::Ref<Tensor> exp(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> log(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> neg(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> tanh(const utils::Ref<const Tensor>& t);
+utils::Ref<Tensor> sin(const utils::Ref<const Tensor>& t);
+utils::Ref<Tensor> cos(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> sqrt(const utils::Ref<const Tensor>& t);
 
 // Binary Ops
@@ -34,8 +36,33 @@ utils::Ref<Tensor> max(const utils::Ref<const Tensor>& a, const utils::Ref<const
 utils::Ref<Tensor> sum(const utils::Ref<const Tensor>& t, const std::vector<int>& axes = {}, bool keep_dims = false);
 utils::Ref<Tensor> max(const utils::Ref<const Tensor>& t, const std::vector<int>& axes = {}, bool keep_dims = false);
 
-// MatMul Op
+// MatMul Op: contracts last 2 dimensions, broadcasts all leading (batch) dimensions
+// A[..., M, K] @ B[..., K, N] -> C[..., M, N]
 utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b);
+
+// Quantized matmul (inference): out[M,N] = a[M,K] @ dequant(qweight)^T, weights kept packed and
+// dequantized in-kernel. `params` selects the scheme (MLX affine 8-bit by default). For MLX affine:
+// qweight [N, K/pack_factor] u32, scales/biases [N, K/group_size] fp32.
+utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
+                                    const utils::Ref<const Tensor>& qweight,
+                                    const utils::Ref<const Tensor>& scales,
+                                    const utils::Ref<const Tensor>& biases,
+                                    const ir::QuantParams& params = {});
+
+// Gather Op: table[V, D, ...] + indices[...] -> output[indices->shape(), D, ...]
+// Preserves indices shape; appends table's remaining dimensions after axis 0.
+utils::Ref<Tensor> gather(const utils::Ref<const Tensor>& table, const utils::Ref<const Tensor>& indices);
+
+// Concat: concatenate two tensors along axis
+utils::Ref<Tensor> concat(const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b, int axis);
+
+// Gather along axis: select elements at integer indices along specified axis
+// tensor: [..., D, ...], indices: [N] int32 -> output: [..., N, ...] (D replaced by N at axis)
+utils::Ref<Tensor> gather_axis(const utils::Ref<const Tensor>& tensor, const utils::Ref<const Tensor>& indices, int axis);
+
+// Scatter along axis: replace elements at indexed positions with values
+// base: [..., D, ...], values: [..., N, ...], indices: [N] int32 -> output: [..., D, ...]
+utils::Ref<Tensor> scatter_axis(const utils::Ref<const Tensor>& base, const utils::Ref<const Tensor>& values, const utils::Ref<const Tensor>& indices, int axis);
 
 // Materialization / Layout Ops
 utils::Ref<const Tensor> contiguous(const utils::Ref<const Tensor>& t);
@@ -43,7 +70,7 @@ utils::Ref<const Tensor> contiguous(const utils::Ref<const Tensor>& t);
 // Movement Ops
 utils::Ref<Tensor> reshape_view(const utils::Ref<const Tensor>& t, const std::vector<size_t>& new_shape);
 utils::Ref<Tensor> permute(const utils::Ref<const Tensor>& t, const std::vector<size_t>& axes);
-utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, size_t dim0, size_t dim1);
+utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, int dim0, int dim1);
 utils::Ref<Tensor> broadcast(const utils::Ref<const Tensor>& t, const std::vector<size_t>& shape);
 utils::Ref<Tensor> slice(const utils::Ref<const Tensor>& t, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step = {});
 

@@ -44,8 +44,8 @@ void DeviceManager::register_device(std::unique_ptr<Device> device) {
     std::lock_guard<std::mutex> lock(_mutex);
     auto type = device->type();
     if (_devices.find(type) == _devices.end()) {
-        std::cout << to_string(type) << " device registered." << std::endl;
         _devices[type] = std::move(device);
+        std::cout << to_string(type) << " device registered." << std::endl;
     } else {
         std::cout << to_string(type) << " device already registered." << std::endl;
     }
@@ -54,12 +54,12 @@ void DeviceManager::register_device(std::unique_ptr<Device> device) {
 void DeviceManager::init() {
     // Devices have already self-registered (static init). Just choose the default:
     // prefer the Metal accelerator when present, otherwise CPU.
-    // if (_devices.count(DeviceType::METAL)) {
-    //     set_default_device_type(DeviceType::METAL);
-    // } else {
-    //     set_default_device_type(DeviceType::CPU);
-    // }
-    set_default_device_type(DeviceType::CPU);
+    if (_devices.count(DeviceType::METAL)) {
+        set_default_device_type(DeviceType::METAL);
+    } else {
+        set_default_device_type(DeviceType::CPU);
+    }
+    // set_default_device_type(DeviceType::CPU);
 }
 
 } // namespace backend

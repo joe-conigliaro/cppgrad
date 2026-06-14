@@ -55,13 +55,39 @@ public:
     virtual void binary_op(ir::BinaryOpType op_type, const Buffer &a, const backend::View &va, const Buffer &b, const backend::View &vb, Buffer &out, const backend::View &vo) const = 0;
     virtual void reduce_op(ir::ReduceOpType op_type, const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo, const std::vector<int> &axes, bool keep_dims) const = 0;
     virtual void matmul(const Buffer &a, const backend::View &va, const Buffer &b, const backend::View &vb, Buffer &out, const backend::View &vo) const = 0;
+
+    // Quantized matmul: out[M,N] = a[M,K] @ dequant(qweight)^T (dequant in kernel). Dispatches on
+    // params.scheme internally (one entry point for all schemes, not a virtual per quant type).
+    // For MLX_AFFINE_U8: a/scales/biases/out are contiguous fp32; qweight is contiguous u32 [N,K/4].
+    virtual void quantized_matmul(const Buffer &a, const Buffer &qweight, const Buffer &scales,
+                                  const Buffer &biases, Buffer &out,
+                                  size_t M, size_t N, size_t K, const ir::QuantParams &params) const = 0;
+
+    // Gather: table[V, D] (float), indices[N] (int32) -> out[N, D] (float)
+    // N = indices.numel(). Backend just processes flat elements; caller shapes the output tensor.
+    virtual void gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const = 0;
+
+    // Gather along axis: tensor with View, indices[N] int32 -> out with same rank but axis dim replaced by N
+    virtual void gather_axis_op(const Buffer &tensor, const backend::View &tv,
+                                 const Buffer &indices,
+                                 Buffer &out, const backend::View &ov,
+                                 int axis) const = 0;
+
+    // Scatter along axis: base + values at indices -> out (same shape as base)
+    virtual void scatter_axis_op(const Buffer &base, const backend::View &bv,
+                                  const Buffer &values, const backend::View &vv,
+                                  const Buffer &indices,
+                                  Buffer &out, const backend::View &ov,
+                                  int axis) const = 0;
+
+    // Concat: concatenate two tensors along axis
+    virtual void concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                           Buffer &out, const backend::View &out_view, int axis) const = 0;
     
-    // Movement Ops
-    // virtual void permute(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<size_t>& axes) const = 0;
-    // virtual void broadcast(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo) const = 0;
-    // virtual void slice_forward(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<size_t>& begin, const std::vector<size_t>&, const std::vector<size_t>& step) const = 0; virtual void
-    // slice_backward_scatter_add(const Buffer& grad_out, const backend::View& vgo, Buffer& grad_in,  const backend::View& vgi, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step) const = 0;
-    
+    // Movement ops (reshape/permute/broadcast/slice) are zero-copy: they produce a strided
+    // backend::View that downstream ops consume directly (see ir/access_meta.h + the executor's
+    // MovementOp aliasing). The only materialization is copy_view below (for ir::contiguous()).
+
     // Generic (materialize a view mapping)
     virtual void copy_view(const Buffer &src, const backend::View &vs, Buffer &dst, const backend::View &vd) const = 0;
     

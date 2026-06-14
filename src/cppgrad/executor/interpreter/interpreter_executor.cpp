@@ -129,6 +129,14 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
                     out_device->backend()->matmul(*parents[0], va, *parents[1], vb, *out_buf, vo);
                 }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::QuantizedMatMulOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    const size_t M = t->children()[0]->shape()[0];
+                    const size_t K = t->children()[0]->shape()[1];
+                    const size_t N = t->children()[1]->shape()[0];   // qweight [N, K/pack_factor]
+                    out_device->backend()->quantized_matmul(*parents[0], *parents[1], *parents[2], *parents[3],
+                                                            *out_buf, M, N, K, op.params);
+                }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::CopyOp>) {
                     auto src_buf = parents[0];
                     const auto vs = backend::View::from(t->children()[0]->access_meta());
@@ -149,7 +157,7 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
 
                         // tmp src (identity) -> tmp dst (identity)
                         auto tmp_dst = out_device->allocator()->allocate(t->numel(), t->dtype());
-                        backend::copy(*tmp_dst, *tmp_src);
+                        out_device->allocator()->copy_device_to_device(*tmp_dst, *tmp_src);
 
                         // tmp dest (identity) -> output device
                         if (vd.is_identity()) {
@@ -169,6 +177,41 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     auto vo = backend::View::from(dst_tensor->access_meta());
                     out_device->backend()->copy_view(*src_buf, va, *dst_buf, vo);
                     out_buf = dst_buf;
+                }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::GatherOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    auto table_tensor = t->children()[0];
+                    auto table_buf = parents[0];
+                    auto indices_buf = parents[1];
+                    // V = table dim 0, D = product of all remaining table dims
+                    size_t V = table_tensor->shape()[0];
+                    size_t D = 1;
+                    for (size_t i = 1; i < table_tensor->shape().size(); ++i) D *= table_tensor->shape()[i];
+                    out_device->backend()->gather_op(*table_buf, *indices_buf, *out_buf, V, D);
+                }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::ConcatOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    std::vector<const backend::Buffer*> input_bufs;
+                    std::vector<backend::View> input_views;
+                    for (size_t i = 0; i < t->children().size(); ++i) {
+                        input_bufs.push_back(parents[i].get());
+                        input_views.push_back(backend::View::from(t->children()[i]->access_meta()));
+                    }
+                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
+                    out_device->backend()->concat_op(input_bufs, input_views, *out_buf, vo, op.axis);
+                }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::GatherAxisOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    auto tv = backend::View::from(t->children()[0]->access_meta());
+                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
+                    out_device->backend()->gather_axis_op(*parents[0], tv, *parents[1], *out_buf, vo, op.axis);
+                }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::ScatterOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    auto bv = backend::View::from(t->children()[0]->access_meta());
+                    auto vv = backend::View::from(t->children()[1]->access_meta());
+                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
+                    out_device->backend()->scatter_axis_op(*parents[0], bv, *parents[1], vv, *parents[2], *out_buf, vo, op.axis);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::MovementOp>) {
                     if (!parents[0]) {

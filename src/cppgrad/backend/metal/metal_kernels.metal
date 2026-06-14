@@ -37,6 +37,10 @@ struct MatmulParams {
     View32 b_v;
     View32 o_v;
     uint   M, K, N;
+    uint   batch;
+    uint   a_batch_stride;
+    uint   b_batch_stride;
+    uint   o_batch_stride;
 };
 
 struct BroadcastParams {
@@ -85,6 +89,30 @@ struct ReduceGeneralParams {
     uint   out_total;
     uchar  is_reduce_axis[8]; // 0/1 flags per input axis
     uchar  pad7[8];
+};
+
+struct ConcatParams {
+    View32  in_views[2];
+    View32  out_v;
+    uint    n;
+    uint    num_inputs;
+    uint    axis;
+    uint    cum_sizes[3]; // cum_sizes[0]=0, cum_sizes[1]=in0[axis], cum_sizes[2]=total
+};
+
+struct GatherAxisParams {
+    View32  tensor_v;
+    View32  out_v;
+    uint    n;
+    uint    axis;
+};
+
+struct ScatterAxisParams {
+    View32  base_v;
+    View32  values_v;
+    View32  out_v;
+    uint    nval;
+    uint    axis;
 };
 
 } // namespace mslp
@@ -142,6 +170,8 @@ inline float apply_unary(float x, ushort op) {
         case 2: return log(x);
         case 3: return -x;
         case 4: return tanh(x);
+        case 5: return sin(x);
+        case 6: return cos(x);
     }
     return x;
 }
@@ -295,23 +325,58 @@ kernel void binary_view_f32(device const float* a_buf [[buffer(0)]],
 
 // Matmul (stride-aware rank-2)
 
+// Naive strided matmul, generic over the weight (B) element type. float(B[...]) is a no-op
+// for float and a native hardware upconvert for bfloat - so the same kernel serves fp32
+// weights and bf16 weights (fp32 activations, fp32 accumulate/output) with no special-casing.
+template<typename TB>
+static inline void matmul_view_impl(device const float* A,
+                                    device const TB* B,
+                                    device float* C,
+                                    constant mslp::MatmulParams& P,
+                                    uint3 tid) {
+    uint batch = tid.z;
+    uint i = tid.y;
+    uint j = tid.x;
+    if (i >= P.M || j >= P.N || batch >= P.batch) return;
+
+    // Decompose the linear batch index over the leading dims [0, rank-2) using each operand's own
+    // strides (0-stride => broadcast). A single collapsed batch stride is wrong for >1 batch dim.
+    uint R = P.o_v.rank;
+    uint a_off = P.a_v.offset, b_off = P.b_v.offset, o_off = P.o_v.offset;
+    uint rem = batch;
+    for (int d = (int)R - 3; d >= 0; --d) {
+        uint c = rem % P.o_v.shape[d];
+        rem /= P.o_v.shape[d];
+        a_off += c * P.a_v.strides[d];
+        b_off += c * P.b_v.strides[d];
+        o_off += c * P.o_v.strides[d];
+    }
+    uint am = P.a_v.strides[R - 2], ak = P.a_v.strides[R - 1];
+    uint bk = P.b_v.strides[R - 2], bn = P.b_v.strides[R - 1];
+    uint om = P.o_v.strides[R - 2], on = P.o_v.strides[R - 1];
+
+    float sum = 0.0f;
+    for (uint k=0; k<P.K; ++k) {
+        sum += A[a_off + i*am + k*ak] * float(B[b_off + k*bk + j*bn]);
+    }
+    C[o_off + i*om + j*on] = sum;
+}
+
 kernel void matmul_view_f32(device const float* A [[buffer(0)]],
                             device const float* B [[buffer(1)]],
                             device float* C [[buffer(2)]],
                             constant mslp::MatmulParams& P [[buffer(3)]],
-                            uint2 tid [[thread_position_in_grid]]) {
-    uint i = tid.y;
-    uint j = tid.x;
-    if (i >= P.M || j >= P.N) return;
+                            uint3 tid [[thread_position_in_grid]]) {
+    matmul_view_impl<float>(A, B, C, P, tid);
+}
 
-    float sum = 0.0f;
-    for (uint k=0; k<P.K; ++k) {
-        uint a_idx = P.a_v.offset + i*P.a_v.strides[0] + k*P.a_v.strides[1];
-        uint b_idx = P.b_v.offset + k*P.b_v.strides[0] + j*P.b_v.strides[1];
-        sum += A[a_idx] * B[b_idx];
-    }
-    uint c_idx = P.o_v.offset + i*P.o_v.strides[0] + j*P.o_v.strides[1];
-    C[c_idx] = sum;
+// Mixed precision: fp32 activations x bf16 weights -> fp32 (lets big weights stay bf16).
+kernel void matmul_view_bf16w(device const float* A [[buffer(0)]],
+                              device const bfloat* B [[buffer(1)]],
+                              device float* C [[buffer(2)]],
+                              constant mslp::MatmulParams& P [[buffer(3)]],
+                              uint3 tid [[thread_position_in_grid]]) {
+    matmul_view_impl<bfloat>(A, B, C, P, tid);
 }
 
 // Tunables
@@ -323,8 +388,15 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
                              device const float* B [[buffer(1)]],
                              device float* C [[buffer(2)]],
                              constant mslp::MatmulParams& P [[buffer(3)]],
-                             uint2 tid  [[thread_position_in_threadgroup]],
-                             uint2 bid  [[threadgroup_position_in_grid]]) {
+                             uint3 tid  [[thread_position_in_threadgroup]],
+                             uint3 bid  [[threadgroup_position_in_grid]]) {
+    uint batch = bid.z;
+    if (batch >= P.batch) return;
+
+    uint a_off = P.a_v.offset + batch * P.a_batch_stride;
+    uint b_off = P.b_v.offset + batch * P.b_batch_stride;
+    uint o_off = P.o_v.offset + batch * P.o_batch_stride;
+
     // Tile origin in output
     uint row0 = bid.y * TM;
     uint col0 = bid.x * TN;
@@ -339,11 +411,10 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
     uint tiles = (P.K + TK - 1) / TK;
 
     for (uint t=0; t<tiles; ++t) {
-        // Each thread loads one element; optionally load 2–4 per thread for bandwidth
         uint a_row = row0 + tid.y;
         uint a_col = t*TK + tid.x;
         if (a_row < P.M && a_col < P.K) {
-            uint a_idx = P.a_v.offset + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
+            uint a_idx = a_off + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
             Asub[tid.y][tid.x] = A[a_idx];
         } else {
             Asub[tid.y][tid.x] = 0.0f;
@@ -352,7 +423,7 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
         uint b_row = t*TK + tid.y;
         uint b_col = col0 + tid.x;
         if (b_row < P.K && b_col < P.N) {
-            uint b_idx = P.b_v.offset + b_row*P.b_v.strides[0] + b_col*P.b_v.strides[1];
+            uint b_idx = b_off + b_row*P.b_v.strides[0] + b_col*P.b_v.strides[1];
             Bsub[tid.y][tid.x] = B[b_idx];
         } else {
             Bsub[tid.y][tid.x] = 0.0f;
@@ -360,10 +431,8 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Compute partial
         for (uint k=0;k<TK;++k) {
             float a = Asub[tid.y][k];
-            // Broadcast this thread's a to TN lanes by reading Bsub[k][x]
             for (uint n=0;n<TN;++n) {
                 acc[tid.y][n] += a * Bsub[k][n];
             }
@@ -372,12 +441,11 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // Write back
     uint out_row = row0 + tid.y;
     for (uint n=0;n<TN;++n) {
         uint out_col = col0 + n;
         if (out_row < P.M && out_col < P.N) {
-            uint c_idx = P.o_v.offset + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
+            uint c_idx = o_off + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
             C[c_idx] = acc[tid.y][n];
         }
     }
@@ -392,45 +460,43 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
                                 device const float* B [[buffer(1)]],
                                 device float* C [[buffer(2)]],
                                 constant mslp::MatmulParams& P [[buffer(3)]],
-                                uint2 tid [[thread_position_in_threadgroup]],
-                                uint2 bid [[threadgroup_position_in_grid]]) {
-    // Tile origin in output
+                                uint3 tid [[thread_position_in_threadgroup]],
+                                uint3 bid [[threadgroup_position_in_grid]]) {
+    uint batch = bid.z;
+    if (batch >= P.batch) return;
+
+    uint a_off = P.a_v.offset + batch * P.a_batch_stride;
+    uint b_off = P.b_v.offset + batch * P.b_batch_stride;
+    uint o_off = P.o_v.offset + batch * P.o_batch_stride;
+
     uint row0 = bid.y * TM;
     uint col0 = bid.x * TN;
 
-    // Accumulator
     float acc[TM][TN];
     for (uint i=0;i<TM;++i) for (uint j=0;j<TN;++j) acc[i][j] = 0.0f;
 
     threadgroup float Asub[TM][TK];
     threadgroup float Bsub[TK][TN];
 
-    // In TN layout, B’s columns are contiguous: for each output column j,
-    // the "column vector" of length K starts at base j*K (in row-major TN strides).
-    // We still tile K in TK, but load B col-wise tiles accordingly.
-
     uint tiles = (P.K + TK - 1) / TK;
     for (uint t=0; t<tiles; ++t) {
-        // Load A tile (row-major NN): rows (row0 + tid.y), K chunk (t*TK + tid.x)
         uint a_row = row0 + tid.y;
         uint a_col = t*TK + tid.x;
         if (a_row < P.M && a_col < P.K) {
-            uint a_idx = P.a_v.offset + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
+            uint a_idx = a_off + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
             Asub[tid.y][tid.x] = A[a_idx];
         } else {
             Asub[tid.y][tid.x] = 0.0f;
         }
 
-        // Load B tile (TN): columns (col0 .. col0+TN-1), each is contiguous along K
-        uint k_base = t*TK;           // start of current K tile
-        uint k_off  = tid.y;          // per-thread y loads K
-        uint j_off  = tid.x;          // per-thread x loads N
-        uint k_idx  = k_base + k_off; // K index within tile
-        uint j_idx  = col0 + j_off;   // column j
+        uint k_base = t*TK;
+        uint k_off  = tid.y;
+        uint j_off  = tid.x;
+        uint k_idx  = k_base + k_off;
+        uint j_idx  = col0 + j_off;
 
         if (k_idx < P.K && j_idx < P.N) {
-            // TN layout: contiguous in K along column j => base j*K + k
-            uint b_idx = P.b_v.offset + j_idx*P.b_v.strides[1] + k_idx*P.b_v.strides[0];
+            uint b_idx = b_off + j_idx*P.b_v.strides[1] + k_idx*P.b_v.strides[0];
             Bsub[k_off][j_off] = B[b_idx];
         } else {
             Bsub[k_off][j_off] = 0.0f;
@@ -438,7 +504,6 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        // Compute partial
         for (uint k=0;k<TK;++k) {
             float a = Asub[tid.y][k];
             for (uint n=0;n<TN;++n) {
@@ -449,12 +514,11 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // Write back
     uint out_row = row0 + tid.y;
     for (uint n=0;n<TN;++n) {
         uint out_col = col0 + n;
         if (out_row < P.M && out_col < P.N) {
-            uint c_idx = P.o_v.offset + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
+            uint c_idx = o_off + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
             C[c_idx] = acc[tid.y][n];
         }
     }
@@ -643,6 +707,24 @@ kernel void reduce_last_axis_f32(device const float* in_buf [[buffer(0)]],
 
 // Reduce (general N-D)
 
+kernel void gather_f32(device const float* table [[buffer(0)]],
+                       device const int*  indices [[buffer(1)]],
+                       device float* out [[buffer(2)]],
+                       constant uint32_t& V [[buffer(3)]],
+                       constant uint32_t& D [[buffer(4)]],
+                       uint gid [[thread_position_in_grid]]) {
+    int k = indices[gid];
+    for (uint j = 0; j < D; ++j) {
+        if (k >= 0 && (uint)k < V) {
+            out[gid * D + j] = table[(uint)k * D + j];
+        } else {
+            out[gid * D + j] = 0.0f;
+        }
+    }
+}
+
+// Reduce (general N-D)
+
 kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
                                device float* out_buf [[buffer(1)]],
                                constant mslp::ReduceGeneralParams& P [[buffer(2)]],
@@ -697,4 +779,149 @@ kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
 
     uint oi = index_from_coords(ocoords, P.out_v);
     out_buf[oi] = acc;
+}
+
+// Concat
+
+kernel void concat_f32(device const float* in0 [[buffer(0)]],
+                       device const float* in1 [[buffer(1)]],
+                       device float*       out_buf [[buffer(2)]],
+                       constant mslp::ConcatParams& P [[buffer(3)]],
+                       uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.n) return;
+
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+
+    uint coord_axis = ocoords[P.axis];
+
+    // Find which input
+    uint input_idx = 0;
+    if (coord_axis >= P.cum_sizes[1]) {
+        input_idx = 1;
+    }
+
+    // Map to input coordinates
+    uint icoords[8];
+    for (ushort d = 0; d < P.out_v.rank; ++d) {
+        if (d == P.axis) {
+            icoords[d] = coord_axis - P.cum_sizes[input_idx];
+        } else {
+            icoords[d] = ocoords[d];
+        }
+    }
+
+    uint si = index_from_coords(icoords, P.in_views[input_idx]);
+    uint oi = index_from_coords(ocoords, P.out_v);
+
+    if (input_idx == 0) {
+        out_buf[oi] = in0[si];
+    } else {
+        out_buf[oi] = in1[si];
+    }
+}
+
+// Gather along axis
+
+kernel void gather_axis_f32(device const float* tensor_buf [[buffer(0)]],
+                            device const int* indices_buf [[buffer(1)]],
+                            device float* out_buf [[buffer(2)]],
+                            constant mslp::GatherAxisParams& P [[buffer(3)]],
+                            uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.n) return;
+
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+
+    // Map output coords to input coords
+    uint icoords[8];
+    for (ushort d = 0; d < P.out_v.rank; ++d) {
+        if (d == P.axis) {
+            // Find position along the gather axis in the output
+            uint axis_pos = 0;
+            uint stride_after = 1;
+            for (ushort d2 = P.out_v.rank; d2 > P.axis; --d2) stride_after *= P.out_v.shape[d2 - 1];
+            // Linear index within the output, then extract axis coordinate
+            axis_pos = ocoords[P.axis];
+            icoords[d] = static_cast<uint>(indices_buf[axis_pos]);
+        } else {
+            icoords[d] = ocoords[d];
+        }
+    }
+
+    uint ti = index_from_coords(icoords, P.tensor_v);
+    uint oi = index_from_coords(ocoords, P.out_v);
+    out_buf[oi] = tensor_buf[ti];
+}
+
+// Scatter along axis
+
+kernel void scatter_axis_f32(device const float* base_buf [[buffer(0)]],
+                             device const float* values_buf [[buffer(1)]],
+                             device const int* indices_buf [[buffer(2)]],
+                             device float* out_buf [[buffer(3)]],
+                             constant mslp::ScatterAxisParams& P [[buffer(4)]],
+                             uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.nval) return;
+
+    uint vcoords[8];
+    coords_from_linear(gid, P.values_v.shape, P.values_v.rank, vcoords);
+
+    // The index along the scatter axis tells us which index to use
+    uint idx_pos = vcoords[P.axis];
+    int32_t scatter_idx = indices_buf[idx_pos];
+    if (scatter_idx < 0) return;
+
+    // Map value coords to output coords
+    uint ocoords[8];
+    for (ushort d = 0; d < P.values_v.rank; ++d) {
+        if (d == P.axis) {
+            ocoords[d] = static_cast<uint>(scatter_idx);
+        } else {
+            ocoords[d] = vcoords[d];
+        }
+    }
+
+    uint vi = index_from_coords(vcoords, P.values_v);
+    uint oi = index_from_coords(ocoords, P.out_v);
+    out_buf[oi] = values_buf[vi];
+}
+
+// Scatter base copy (initializes output from base before scatter writes)
+
+kernel void scatter_base_copy_f32(device const float* base_buf [[buffer(0)]],
+                                   device float* out_buf [[buffer(1)]],
+                                   constant mslp::ScatterAxisParams& P [[buffer(2)]],
+                                   uint gid [[thread_position_in_grid]]) {
+    // Copy base view to output view
+    uint n = 0;
+    for (ushort d = 0; d < P.base_v.rank; ++d) n *= P.base_v.shape[d];
+    // Actually compute numel
+    n = 1;
+    for (ushort d = 0; d < P.base_v.rank; ++d) n *= P.base_v.shape[d];
+    if (gid >= n) return;
+
+    uint coords[8];
+    coords_from_linear(gid, P.base_v.shape, P.base_v.rank, coords);
+    uint bi = index_from_coords(coords, P.base_v);
+    uint oi = index_from_coords(coords, P.out_v);
+    out_buf[oi] = base_buf[bi];
+}
+
+// Gather rows from a bf16 table -> fp32 output (embedding lookup with bf16 weights).
+kernel void gather_bf16_f32(device const ushort* table [[buffer(0)]],
+                            device const int*    indices [[buffer(1)]],
+                            device float*        out [[buffer(2)]],
+                            constant uint32_t& V [[buffer(3)]],
+                            constant uint32_t& D [[buffer(4)]],
+                            uint gid [[thread_position_in_grid]]) {
+    int k = indices[gid];
+    for (uint j = 0; j < D; ++j) {
+        if (k >= 0 && (uint)k < V) {
+            ushort h = table[(uint)k * D + j];
+            out[gid * D + j] = as_type<float>((uint)h << 16);   // bf16 -> fp32
+        } else {
+            out[gid * D + j] = 0.0f;
+        }
+    }
 }

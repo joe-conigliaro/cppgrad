@@ -2,6 +2,7 @@
 // https://github.com/joe-conigliaro
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/ops.h"
@@ -46,6 +47,8 @@ utils::Ref<Tensor> exp (const utils::Ref<const Tensor>& t) { return unary(UnaryO
 utils::Ref<Tensor> log (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::LOG,  t); }
 utils::Ref<Tensor> neg (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::NEG,  t); }
 utils::Ref<Tensor> tanh(const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::TANH, t); }
+utils::Ref<Tensor> sin (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::SIN,  t); }
+utils::Ref<Tensor> cos (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::COS,  t); }
 utils::Ref<Tensor> sqrt(const utils::Ref<const Tensor>& t) { return pow(t, 0.5f); }
 
 // Binary Ops
@@ -65,7 +68,7 @@ utils::Ref<Tensor> sum(const utils::Ref<const Tensor>& t, const std::vector<int>
     const int rank = static_cast<int>(in_shape.size());
     std::vector<int> axes_in = axes;
     if (axes_in.empty()) { axes_in.resize(rank); std::iota(axes_in.begin(), axes_in.end(), 0); }
-    auto axes_n = cppgrad::utils::vector::normalize_axes(axes_in, rank);
+    auto axes_n = cppgrad::utils::shape::normalize_unique_sorted_axes(axes_in, rank);
     auto out_shape = utils::shape::get_reduce_shape(in_shape, axes_n, keep_dims);
 
     return Tensor::make(ReduceOp{ ReduceOpType::SUM, axes_n, keep_dims }, {t}, out_shape, t->device_type(), t->dtype());
@@ -76,19 +79,139 @@ utils::Ref<Tensor> max(const utils::Ref<const Tensor>& t, const std::vector<int>
     const int rank = static_cast<int>(in_shape.size());
     std::vector<int> axes_in = axes;
     if (axes_in.empty()) { axes_in.resize(rank); std::iota(axes_in.begin(), axes_in.end(), 0); }
-    auto axes_n = cppgrad::utils::vector::normalize_axes(axes_in, rank);
+    auto axes_n = cppgrad::utils::shape::normalize_unique_sorted_axes(axes_in, rank);
     auto out_shape = utils::shape::get_reduce_shape(in_shape, axes_n, keep_dims);
 
     return Tensor::make(ReduceOp{ ReduceOpType::MAX, axes_n, keep_dims }, {t}, out_shape, t->device_type(), t->dtype());
 }
 
-// MatMul Op
+// MatMul Op: contracts last 2 dimensions, broadcasts all leading (batch) dimensions
+// A[..., M, K] @ B[..., K, N] -> C[..., M, N]
 utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b) {
-    if (a->shape().size() != 2 || b->shape().size() != 2 || a->shape()[1] != b->shape()[0]) {
-        throw std::runtime_error("matmul: invalid shapes");
+    if (a->shape().size() < 2 || b->shape().size() < 2) {
+        throw std::runtime_error("matmul: tensors must have rank >= 2");
     }
-    std::vector<size_t> out_shape = { a->shape()[0], b->shape()[1] };
+    if (a->shape().back() != b->shape()[b->shape().size() - 2]) {
+        std::string msg = "matmul: inner dims mismatch. A shape={";
+        for (auto d : a->shape()) msg += std::to_string(d) + " ";
+        msg += "}, B shape={"  ;
+        for (auto d : b->shape()) msg += std::to_string(d) + " ";
+        msg += "}";
+        throw std::runtime_error(msg);
+    }
+
+    size_t ra = a->shape().size();
+    size_t rb = b->shape().size();
+
+    // Batch dims: all dims except last 2
+    std::vector<size_t> batch_a(a->shape().begin(), a->shape().begin() + ra - 2);
+    std::vector<size_t> batch_b(b->shape().begin(), b->shape().begin() + rb - 2);
+
+    // Matrix dims
+    size_t M = a->shape()[ra - 2];
+    size_t N = b->shape()[rb - 1];
+
+    // Broadcast batch dims
+    std::vector<size_t> bc_batch = batch_a.size() >= batch_b.size() ? batch_a : batch_b;
+    size_t nb = bc_batch.size();
+    for (size_t i = 0; i < nb; ++i) {
+        size_t ia = i < batch_a.size() ? batch_a[i] : 1;
+        size_t ib = i < batch_b.size() ? batch_b[i] : 1;
+        if (ia != 1 && ib != 1 && ia != ib) {
+            throw std::runtime_error("matmul: batch dims incompatible");
+        }
+        bc_batch[i] = std::max(ia, ib);
+    }
+
+    // Build output shape: [bc_batch..., M, N]
+    std::vector<size_t> out_shape = bc_batch;
+    out_shape.push_back(M);
+    out_shape.push_back(N);
+
     return Tensor::make(MatMulOp{}, {a, b}, out_shape, a->device_type(), a->dtype());
+}
+
+utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
+                                    const utils::Ref<const Tensor>& qweight,
+                                    const utils::Ref<const Tensor>& scales,
+                                    const utils::Ref<const Tensor>& biases,
+                                    const ir::QuantParams& params) {
+    if (a->shape().size() != 2)
+        throw std::runtime_error("quantized_matmul: activation must be 2D [M,K]");
+    const size_t K = a->shape()[1];
+    const size_t N = qweight->shape()[0];           // qweight: [N, K/pack_factor]
+    if (qweight->shape().size() != 2 ||
+        qweight->shape()[1] * static_cast<size_t>(params.pack_factor) != K)
+        throw std::runtime_error("quantized_matmul: qweight must be [N, K/pack_factor] matching K");
+    std::vector<size_t> out_shape = {a->shape()[0], N};
+    return Tensor::make(QuantizedMatMulOp{params}, {a, qweight, scales, biases},
+                        out_shape, a->device_type(), a->dtype());
+}
+
+// Gather Op: table[V, D, ...] + indices[...] -> output[indices->shape(), D, ...]
+// Preserves indices shape and appends table's remaining dimensions (after axis 0).
+utils::Ref<Tensor> gather(const utils::Ref<const Tensor>& table, const utils::Ref<const Tensor>& indices) {
+    std::vector<size_t> out_shape = indices->shape();
+    for (size_t i = 1; i < table->shape().size(); ++i) {
+        out_shape.push_back(table->shape()[i]);
+    }
+    // bf16 weight table -> fp32 output (dequantize on lookup): the embedding table is kept in
+    // bf16 to save memory, but downstream activations are fp32.
+    auto out_dtype = (table->dtype() == backend::DType::BFLOAT16)
+                         ? backend::DType::FLOAT32 : table->dtype();
+    return Tensor::make(GatherOp{}, {table, indices}, out_shape, table->device_type(), out_dtype);
+}
+
+// Gather along axis: select elements at integer indices along specified axis
+utils::Ref<Tensor> gather_axis(const utils::Ref<const Tensor>& tensor, const utils::Ref<const Tensor>& indices, int axis) {
+    const auto& shape = tensor->shape();
+    int rank = static_cast<int>(shape.size());
+    int ax = axis < 0 ? rank + axis : axis;
+    if (ax < 0 || ax >= rank) throw std::runtime_error("gather_axis: axis out of range");
+    size_t n = indices->numel();
+    std::vector<size_t> out_shape = shape;
+    out_shape[ax] = n;
+    auto out = Tensor::make(GatherAxisOp{ax}, {tensor, indices}, out_shape, tensor->device_type(), tensor->dtype());
+    out->set_access_meta(AccessMeta::contiguous_from(out_shape));
+    return out;
+}
+
+// Scatter along axis: replace elements at indexed positions with values
+utils::Ref<Tensor> scatter_axis(const utils::Ref<const Tensor>& base, const utils::Ref<const Tensor>& values, const utils::Ref<const Tensor>& indices, int axis) {
+    const auto& shape = base->shape();
+    int rank = static_cast<int>(shape.size());
+    int ax = axis < 0 ? rank + axis : axis;
+    if (ax < 0 || ax >= rank) throw std::runtime_error("scatter_axis: axis out of range");
+    size_t n = indices->numel();
+    if (values->shape()[ax] != n) throw std::runtime_error("scatter_axis: values shape mismatch at axis");
+    // Output has same shape as base
+    auto out = Tensor::make(ScatterOp{ax}, {base, values, indices}, shape, base->device_type(), base->dtype());
+    out->set_access_meta(AccessMeta::contiguous_from(shape));
+    return out;
+}
+
+// Concat: concatenate two tensors along axis
+utils::Ref<Tensor> concat(const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b, int axis) {
+    const auto& as = a->shape();
+    const auto& bs = b->shape();
+    if (as.size() != bs.size()) {
+        throw std::runtime_error("concat: tensors must have the same rank");
+    }
+    int rank = static_cast<int>(as.size());
+    if (axis < 0) axis += rank;
+    if (axis < 0 || axis >= rank) {
+        throw std::runtime_error("concat: axis out of range");
+    }
+    for (int i = 0; i < rank; ++i) {
+        if (i != axis && as[i] != bs[i]) {
+            throw std::runtime_error("concat: non-concat dimensions must match");
+        }
+    }
+    std::vector<size_t> out_shape = as;
+    out_shape[axis] = as[axis] + bs[axis];
+    auto out = Tensor::make(ConcatOp{axis}, {a, b}, out_shape, a->device_type(), a->dtype());
+    out->set_access_meta(AccessMeta::contiguous_from(out_shape));
+    return out;
 }
 
 // Materialization / Layout Ops
@@ -109,10 +232,13 @@ utils::Ref<Tensor> permute(const utils::Ref<const Tensor>& t, const std::vector<
     return Tensor::make(MovementOp{MovementOpType::PERMUTE, axes}, {t}, AccessMeta::permute_from(t->access_meta(), axes), t->device_type(), t->dtype());
 }
 
-utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, size_t dim0, size_t dim1) {
-    std::vector<size_t> axes(t->shape().size());
+utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, int dim0, int dim1) {
+    int rank = static_cast<int>(t->shape().size());
+    if (dim0 < 0) dim0 += rank;
+    if (dim1 < 0) dim1 += rank;
+    std::vector<size_t> axes(rank);
     std::iota(axes.begin(), axes.end(), 0);
-    std::swap(axes[dim0], axes[dim1]);
+    std::swap(axes[(size_t)dim0], axes[(size_t)dim1]);
     return permute(t, axes);
 }
 
@@ -127,7 +253,14 @@ utils::Ref<Tensor> slice(const utils::Ref<const Tensor>& t, const std::vector<si
 
 // Composite Ops
 utils::Ref<Tensor> reshape(const utils::Ref<const Tensor>& t, const std::vector<size_t>& new_shape) {
-    if (utils::vector::numel(t->shape()) != utils::vector::numel(new_shape)) throw std::runtime_error("reshape: numel must match");
+    if (utils::vector::numel(t->shape()) != utils::vector::numel(new_shape)) {
+        std::string msg = "reshape: numel must match. src={" ;
+        for (auto d : t->shape()) msg += std::to_string(d) + " ";
+        msg += "} dst={";
+        for (auto d : new_shape) msg += std::to_string(d) + " ";
+        msg += "}";
+        throw std::runtime_error(msg);
+    }
     if (t->access_meta().contiguous) return reshape_view(t, new_shape);
     return reshape_view(contiguous(t), new_shape);
 }
@@ -136,7 +269,7 @@ utils::Ref<Tensor> mean(const utils::Ref<const Tensor>& t, const std::vector<int
     const int rank = static_cast<int>(t->shape().size());
     std::vector<int> axes_in = axes;
     if (axes_in.empty()) { axes_in.resize(rank); std::iota(axes_in.begin(), axes_in.end(), 0); }
-    auto axes_n = cppgrad::utils::vector::normalize_axes(axes_in, rank);
+    auto axes_n = cppgrad::utils::shape::normalize_unique_sorted_axes(axes_in, rank);
     auto summed = sum(t, axes_n, keep_dims);
     size_t reduction_size = cppgrad::utils::shape::get_reduce_count(t->shape(), axes_n);
     return div(summed, static_cast<float>(reduction_size));

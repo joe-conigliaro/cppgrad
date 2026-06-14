@@ -249,21 +249,54 @@ const backend::View &vb, Buffer &out,
 const backend::View &vo) const {
     if (out.size_bytes() == 0)
         return;
-    if (va.rank != 2 || vb.rank != 2 || vo.rank != 2)
-        throw std::runtime_error("Metal matmul: rank-2 views required");
+    if (va.rank < 2 || vb.rank < 2 || vo.rank < 2)
+        throw std::runtime_error("Metal matmul: views must have rank >= 2");
+    if (va.rank != vb.rank || va.rank != vo.rank)
+        throw std::runtime_error("Metal matmul: all views must have same rank");
+
+    const unsigned rank = va.rank;
+    const unsigned M = va.shape[rank - 2];
+    const unsigned K = va.shape[rank - 1];
+    const unsigned N = vb.shape[rank - 1];
+
+    // Compute batch count and per-batch strides
+    unsigned batch = 1;
+    for (unsigned d = 0; d < rank - 2; ++d) batch *= va.shape[d];
+
+    // Collapsed batch stride: element offset per unit of linear batch index
+    unsigned a_batch_stride = 0, b_batch_stride = 0, o_batch_stride = 0;
+    for (unsigned d = 0; d < rank - 2; ++d) {
+        unsigned tail = 1;
+        for (unsigned e = d + 1; e < rank - 2; ++e) tail *= va.shape[e];
+        a_batch_stride += va.strides[d] * tail;
+        b_batch_stride += vb.strides[d] * tail;
+        o_batch_stride += vo.strides[d] * tail;
+    }
 
     MatmulParams P{};
     pack_view32(va, P.a_v);
     pack_view32(vb, P.b_v);
     pack_view32(vo, P.o_v);
-    P.M = static_cast<unsigned int>(va.shape[0]);
-    P.K = static_cast<unsigned int>(va.shape[1]);
-    P.N = static_cast<unsigned int>(vb.shape[1]);
+    P.M = M;
+    P.K = K;
+    P.N = N;
+    P.batch = batch;
+    P.a_batch_stride = a_batch_stride;
+    P.b_batch_stride = b_batch_stride;
+    P.o_batch_stride = o_batch_stride;
+    // NOTE: do NOT clobber a_v/b_v/o_v strides. The naive view kernel decomposes the linear batch
+    // index over the leading dims using the full (unmodified) shape/strides, and uses strides
+    // [rank-2]/[rank-1] for the matrix. A single collapsed batch stride is wrong for >1 batch dim.
 
     const bool tiny = (P.M < 8 || P.N < 8 || P.K < 8);
-    const bool fast_packed = va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d();
+    // For N-D views, fall back to naive kernel (safe for arbitrary strides).
+    // Tiled kernels are only used for proper 2D rank-2 views.
+    const bool is_2d = (rank == 2);
+    const bool fast_packed = is_2d && va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d();
     const bool nn_layout = fast_packed && vb.is_rowmaj_nn_2d();
     const bool tn_layout = fast_packed && vb.is_rowmaj_tn_2d();
+    // bf16 weights use the generic naive kernel (the tiled kernels are fp32-only).
+    const bool b_bf16 = (b.dtype() == backend::DType::BFLOAT16);
 
     ComputeWork work;
     work.buffers.push_back({as_mtl(a), 0});
@@ -271,26 +304,20 @@ const backend::View &vo) const {
     work.buffers.push_back({as_mtl(out), 0});
     work.add_bytes(3, &P, sizeof(P));
 
-    if (tiny || (!nn_layout && !tn_layout)) {
-        // Naive kernel: one thread per output element, 2D grid (N x M).
-        work.pso = cache->get("matmul_view_f32");
+    if (b_bf16 || tiny || (!nn_layout && !tn_layout)) {
+        work.pso = cache->get(b_bf16 ? "matmul_view_bf16w" : "matmul_view_f32");
         NSUInteger w = work.pso.threadExecutionWidth;
-        if (w == 0)
-            w = 32;
+        if (w == 0) w = 32;
         NSUInteger h = [work.pso maxTotalThreadsPerThreadgroup] / w;
-        if (h == 0)
-            h = 1;
+        if (h == 0) h = 1;
         work.useThreadgroups = false;
-        work.grid = MTLSizeMake(P.N, P.M, 1);
+        work.grid = MTLSizeMake(P.N, P.M, batch);
         work.threadsPerThreadgroup = MTLSizeMake(w, h, 1);
     } else {
-        // Tiled kernel: grid is in threadgroups (one per TMxTN output tile),
-        // threadgroup size matches the tile (TM=TN=16, hardcoded in the kernel).
         constexpr unsigned TM = 16, TN = 16;
-        work.pso =
-            cache->get(nn_layout ? "matmul_tiled_f32" : "matmul_tiled_tn_f32");
+        work.pso = cache->get(nn_layout ? "matmul_tiled_f32" : "matmul_tiled_tn_f32");
         work.useThreadgroups = true;
-        work.grid = MTLSizeMake((P.N + TN - 1) / TN, (P.M + TM - 1) / TM, 1);
+        work.grid = MTLSizeMake((P.N + TN - 1) / TN, (P.M + TM - 1) / TM, batch);
         work.threadsPerThreadgroup = MTLSizeMake(TN, TM, 1);
     }
     encode_submit(work);
@@ -349,6 +376,164 @@ void submit_rand_normal(Buffer &out, float mean, float stddev) const {
     work.add_bytes(4, &out_numel, sizeof(uint32_t));
     set_linear(work, out.numel());
     encode_submit(work);
+}
+
+void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &scales,
+                         const Buffer &biases, Buffer &out,
+                         size_t M, size_t N, size_t K, int group_size) const {
+    if (out.size_bytes() == 0) return;
+    ComputeWork work;
+    work.pso = cache->get("matmul_quant_f32");
+    // pair is {buffer, byte-offset}; the binding index is the vector position (0..4).
+    work.buffers.push_back({as_mtl(a), 0});
+    work.buffers.push_back({as_mtl(qweight), 0});
+    work.buffers.push_back({as_mtl(scales), 0});
+    work.buffers.push_back({as_mtl(biases), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    uint32_t m = (uint32_t)M, n = (uint32_t)N, k = (uint32_t)K, gs = (uint32_t)group_size;
+    work.add_bytes(5, &m, sizeof(uint32_t));
+    work.add_bytes(6, &n, sizeof(uint32_t));
+    work.add_bytes(7, &k, sizeof(uint32_t));
+    work.add_bytes(8, &gs, sizeof(uint32_t));
+    set_linear(work, M * N);   // one thread per output element
+    encode_submit(work);
+}
+
+void submit_gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const {
+    if (out.size_bytes() == 0) return;
+    const size_t N = indices.numel();
+    ComputeWork work;
+    // The embedding table may be bf16 (dequantized weights kept compact) -> fp32 output.
+    const bool table_bf16 = (table.dtype() == backend::DType::BFLOAT16);
+    work.pso = cache->get(table_bf16 ? "gather_bf16_f32" : "gather_f32");
+    work.buffers.push_back({as_mtl(table), 0});
+    work.buffers.push_back({as_mtl(indices), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    uint32_t v_u32 = static_cast<uint32_t>(V);
+    uint32_t d_u32 = static_cast<uint32_t>(D);
+    work.add_bytes(3, &v_u32, sizeof(uint32_t));
+    work.add_bytes(4, &d_u32, sizeof(uint32_t));
+    set_linear(work, N);
+    encode_submit(work);
+}
+
+void submit_concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                      Buffer &out, const backend::View &out_view, int axis) const {
+    if (out.size_bytes() == 0) return;
+    const size_t rank = out_view.rank;
+    const uint32_t u_axis = static_cast<uint32_t>(axis < 0 ? axis + static_cast<int>(rank) : axis);
+
+    // Build CumParams
+    struct {
+        View32 in_views[2];
+        View32 out_v;
+        uint32_t n;
+        uint32_t num_inputs;
+        uint32_t axis;
+        uint32_t cum_sizes[3];
+    } P{};
+
+    pack_view32(input_views[0], P.in_views[0]);
+    pack_view32(input_views[1], P.in_views[1]);
+    pack_view32(out_view, P.out_v);
+    P.n = static_cast<uint32_t>(out.numel());
+    P.num_inputs = static_cast<uint32_t>(inputs.size());
+    P.axis = u_axis;
+    P.cum_sizes[0] = 0;
+    P.cum_sizes[1] = input_views[0].shape[axis < 0 ? axis + static_cast<int>(rank) : axis];
+    P.cum_sizes[2] = P.cum_sizes[1] + input_views[1].shape[axis < 0 ? axis + static_cast<int>(rank) : axis];
+
+    ComputeWork work;
+    work.pso = cache->get("concat_f32");
+    work.buffers.push_back({as_mtl(*inputs[0]), 0});
+    work.buffers.push_back({as_mtl(*inputs[1]), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    work.add_bytes(3, &P, sizeof(P));
+    set_linear(work, out.numel());
+    encode_submit(work);
+}
+
+void submit_gather_axis_op(const Buffer& tensor, const backend::View& tv,
+                            const Buffer& indices,
+                            Buffer& out, const backend::View& ov,
+                            int axis) const {
+    if (out.numel() == 0) return;
+
+    struct {
+        View32 tensor_v;
+        View32 out_v;
+        uint32_t n;
+        uint32_t axis;
+    } P{};
+
+    pack_view32(tv, P.tensor_v);
+    pack_view32(ov, P.out_v);
+    P.n = static_cast<uint32_t>(ov.numel);
+    P.axis = static_cast<uint32_t>(axis);
+
+    ComputeWork work;
+    work.pso = cache->get("gather_axis_f32");
+    work.buffers.push_back({as_mtl(tensor), 0});
+    work.buffers.push_back({as_mtl(indices), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    work.add_bytes(3, &P, sizeof(P));
+    set_linear(work, ov.numel);
+    encode_submit(work);
+}
+
+void submit_scatter_axis_op(const Buffer& base, const backend::View& bv,
+                             const Buffer& values, const backend::View& vv,
+                             const Buffer& indices,
+                             Buffer& out, const backend::View& ov,
+                             int axis) const {
+    if (out.numel() == 0) return;
+
+    // Step 1: copy base to output
+    {
+        struct {
+            View32 base_v;
+            View32 values_v;
+            View32 out_v;
+            uint32_t nval;
+            uint32_t axis;
+        } P{};
+        pack_view32(bv, P.base_v);
+        pack_view32(ov, P.out_v);
+
+        ComputeWork work;
+        work.pso = cache->get("scatter_base_copy_f32");
+        work.buffers.push_back({as_mtl(base), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        work.add_bytes(2, &P, sizeof(P));
+        set_linear(work, bv.numel);
+        encode_submit(work);
+    }
+
+    // Step 2: scatter values at indexed positions
+    {
+        struct {
+            View32 base_v;
+            View32 values_v;
+            View32 out_v;
+            uint32_t nval;
+            uint32_t axis;
+        } P{};
+        pack_view32(bv, P.base_v);
+        pack_view32(vv, P.values_v);
+        pack_view32(ov, P.out_v);
+        P.nval = static_cast<uint32_t>(vv.numel);
+        P.axis = static_cast<uint32_t>(axis);
+
+        ComputeWork work;
+        work.pso = cache->get("scatter_axis_f32");
+        work.buffers.push_back({as_mtl(base), 0});
+        work.buffers.push_back({as_mtl(values), 0});
+        work.buffers.push_back({as_mtl(indices), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        work.add_bytes(4, &P, sizeof(P));
+        set_linear(work, vv.numel);
+        encode_submit(work);
+    }
 }
 };
 
@@ -419,12 +604,49 @@ const backend::View &vo) const {
     _impl->submit_matmul(a, va, b, vb, out, vo);
 }
 
+void MetalBackend::quantized_matmul(const Buffer &a, const Buffer &qweight, const Buffer &scales,
+                                    const Buffer &biases, Buffer &out,
+                                    size_t M, size_t N, size_t K, const ir::QuantParams &params) const {
+    switch (params.scheme) {
+        case ir::QuantScheme::MLX_AFFINE_U8:
+            _impl->submit_matmul_quant(a, qweight, scales, biases, out, M, N, K, params.group_size);
+            return;
+    }
+    throw std::runtime_error("MetalBackend::quantized_matmul: unsupported quant scheme");
+}
+
 // Copy view
 void MetalBackend::copy_view(const Buffer &src, const backend::View &vs,
 Buffer &dst, const backend::View &vd) const {
     if (dst.size_bytes() == 0)
         return;
     _impl->submit_copy_view(src, vs, dst, vd);
+}
+
+void MetalBackend::gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const {
+    if (out.size_bytes() == 0) return;
+    _impl->submit_gather_op(table, indices, out, V, D);
+}
+
+void MetalBackend::concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                             Buffer &out, const backend::View &out_view, int axis) const {
+    if (out.size_bytes() == 0) return;
+    _impl->submit_concat_op(inputs, input_views, out, out_view, axis);
+}
+
+void MetalBackend::gather_axis_op(const Buffer& tensor, const backend::View& tv,
+                                   const Buffer& indices,
+                                   Buffer& out, const backend::View& ov,
+                                   int axis) const {
+    _impl->submit_gather_axis_op(tensor, tv, indices, out, ov, axis);
+}
+
+void MetalBackend::scatter_axis_op(const Buffer& base, const backend::View& bv,
+                                    const Buffer& values, const backend::View& vv,
+                                    const Buffer& indices,
+                                    Buffer& out, const backend::View& ov,
+                                    int axis) const {
+    _impl->submit_scatter_axis_op(base, bv, values, vv, indices, out, ov, axis);
 }
 
 } // namespace metal

@@ -2,7 +2,8 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include "vector"
+#include <string>
+#include <vector>
 #include "cppgrad/utils/shape.h"
 
 namespace cppgrad {
@@ -82,7 +83,12 @@ struct AccessMeta {
             } else if (in_dim == 1 && out_dim > 1) {
                 a.strides[r_out - 1 - i] = 0; // broadcast
             } else {
-                throw std::runtime_error("broadcast_from: incompatible shapes");
+                std::string msg = "broadcast_from: incompatible shapes. from={";
+                for (auto d : p.shape) msg += std::to_string(d) + " ";
+                msg += "}, to={"  ;
+                for (auto d : out_shape) msg += std::to_string(d) + " ";
+                msg += "} at dim offset " + std::to_string(i);
+                throw std::runtime_error(msg);
             }
         }
         a.recompute_contiguity();

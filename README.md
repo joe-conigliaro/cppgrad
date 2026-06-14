@@ -12,9 +12,9 @@ A small C++17 autograd + neural-network library.
 - **Arena Allocation**: Allocate in arena when `GraphScope` is active, otherwise falls back to heap.
 - **View-based layouts**: `AccessMeta` encodes `shape/strides/offset` for zero-copy movement ops.
 - **Materialization when needed**: `contiguous()` (and copy paths) produce dense `offset=0` buffers.
-- **Multiple backends**: CPU + Metal (CPU is the current default, see `void DeviceManager::init()` in src/cppgrad/backend/device_manager.cpp).
+- **Multiple backends**: CPU + Metal. The default is chosen by `void DeviceManager::init()` (Metal when available, else CPU) in src/cppgrad/backend/device_manager.cpp.
 - **Executor**: Interpreter (Metal backend uses JIT Metal shader compilation).
-- **Dtype**: `FLOAT32` for compute (Metal kernels are `f32`-only today).
+- **Dtype**: `FLOAT32` for compute / activations; weights may be `BFLOAT16` or 8-bit (MLX affine) quantized, dequantized in-kernel (matmul / gather) on both CPU and Metal.
 
 ---
 
@@ -34,6 +34,14 @@ committed (and waited on) **once** at:
   end just like the synchronous CPU backend.
 - **host readback** - the allocator's device->host / device->device / host->device copies flush pending
   compute first, so a read never races ahead of the kernels that produce its data.
+
+## LLM inference (Qwen3.5 / 3.6)
+Runs Qwen3.5/3.6 - including the 27B - from MLX `.safetensors` checkpoints via
+`examples/llm/qwen3_inference.cpp` (`--quant` keeps weights 8-bit). Includes a faithful
+GatedDeltaNet linear-attention + full-attention hybrid, a KV / recurrent-state cache, a
+byte-level BPE tokenizer, and an MLX-affine quantized matmul (CPU + Metal).
+
+---
 
 ## Quickstart
 Simple linear regression with `SGD` (batched)
@@ -120,10 +128,9 @@ Run via the repo script:
 ---
 
 ## TODO
-- Optimizer parameter/state updates
-  - Graph-based updates via spcialized `OptimizerStepOp` with a dedicated backend kernel (lazy, schedulable, fuseable) vs
-  - Graph-based updates via `AssignOp` (lazy, schedulable/fuseable, backend-consistent) vs
-  - Eager/in-place updates via `set_parameter_data` / `copy_into_parameter` (simple, but breaks batching)
+- ~~Optimizer parameter/state updates~~ **(done)**
+  - ~~Graph-based updates via `OptimizerStepOp` vs `AssignOp` vs eager `set_parameter_data`/`copy_into_parameter`.~~ Implemented via lazy `AssignOp` graph nodes (schedulable/fuseable, backend-consistent) - see `optim/{sgd,adam,adamw}.h`.
+  - Future: a fused `OptimizerStepOp` (single backend kernel) for perf.
 - ~~Metal streaming / async execution~~ **(done)**
   - ~~Add per-device `ExecutionContext` and batch command buffer submission.~~ Per-device `MetalExecutionContext` batches compute into one command buffer.
   - ~~Remove per-op `waitUntilCompleted`; sync only on host readback.~~ Committed at `GraphScope` boundaries (`Backend::flush_pending()`) and on host readback.
@@ -137,7 +144,12 @@ Run via the repo script:
 - Kernel fusion
   - Fuse elementwise chains (unary/binary) within schedules.
 - CPU SIMD & BLAS
-  - SIMD elementwise; BLAS (or tiled GEMM) for matmul.
+  - SIMD elementwise; BLAS (or tiled GEMM) for matmul. The quantized matmul is currently a naive
+    reference (CPU triple-loop / Metal one-thread-per-output); a tiled/threadgroup quant GEMM is the
+    main LLM decode speed lever.
+- Autograd coverage (for training)
+  - Backward for `GatherOp` (embedding lookup), N-D / batched `MatMul`, and a proper scatter-add
+    `SLICE` backward. The library is inference-complete; these gaps block end-to-end LLM training.
 - Graph lowering (consider)
   - Lower IR -> scheduled kernel regions (fusion + memory planning).
 

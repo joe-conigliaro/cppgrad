@@ -63,6 +63,12 @@ LIB_MM_SOURCES=""
 LIB_METAL_SOURCES=""
 METALLIB_PATH=""
 
+# Homebrew headers/libs (nlohmann/json for safetensors, PCRE2 for the BPE tokenizer).
+if [ -d /opt/homebrew/include ]; then
+    INCLUDE_FLAGS="$INCLUDE_FLAGS -I/opt/homebrew/include"
+    FRAMEWORKS="$FRAMEWORKS -L/opt/homebrew/lib -lpcre2-8"
+fi
+
 # Metal Compilation on Apple
 if [ "$ON_APPLE" = "true" ]; then
     echo "Apple platform detected. Preparing Metal backend..."
@@ -83,7 +89,7 @@ if [ "$ON_APPLE" = "true" ]; then
           air="$METAL_BUILD_DIR/$base.air"
 
         echo "Compiling Metal: $msrc -> $air"
-        xcrun -sdk macosx metal -std=macos-metal2.3 -O3 -c "$msrc" -o "$air"
+        xcrun -sdk macosx metal -std=metal3.1 -O3 -c "$msrc" -o "$air"
 
         METAL_AIRS+=("$air")
       done

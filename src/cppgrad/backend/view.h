@@ -11,7 +11,7 @@
 namespace cppgrad {
 namespace backend {
 
-constexpr int kMaxRank = 8;
+constexpr uint32_t kMaxRank = 8;
 
 // Bit flags for fast paths
 enum ViewFlags : uint32_t {
@@ -79,7 +79,12 @@ struct View {
         #ifdef CPPGRAD_DEBUG
             const bool is_row_major_strides = (cppgrad::utils::shape::row_major_strides(acc.shape) == acc.strides);
             if (is_row_major_strides != acc.contiguous) {
-                throw std::runtime_error("AccessMeta.contiguous is stale/inconsistent");
+                std::string msg = "AccessMeta.contiguous is stale/inconsistent. shape={";
+                for (auto d : acc.shape) msg += std::to_string(d) + " ";
+                msg += "} strides={";
+                for (auto d : acc.strides) msg += std::to_string(d) + " ";
+                msg += "} contiguous=" + std::to_string(acc.contiguous) + ", expected=" + std::to_string(is_row_major_strides);
+                throw std::runtime_error(msg);
             }
         #endif
         if (is_row_major) {

@@ -29,12 +29,20 @@ public:
     void binary_op(ir::BinaryOpType op_type, const Buffer& a, const backend::View& va, const Buffer& b, const backend::View& vb, Buffer& out, const backend::View& vo) const override;
     void reduce_op(ir::ReduceOpType op_type, const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<int>& axes, bool keep_dims) const override;
     void matmul(const Buffer& a, const backend::View& va, const Buffer& b, const backend::View& vb, Buffer& out, const backend::View& vo) const override;
-
-    // Movement
-    // void permute(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<size_t>& axes) const override;
-    // void broadcast(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo) const override;
-    // void slice_forward(const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step) const override;
-    // void slice_backward_scatter_add(const Buffer& grad_out, const backend::View& vgo, Buffer& grad_in,  const backend::View& vgi, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step) const override;
+    void quantized_matmul(const Buffer& a, const Buffer& qweight, const Buffer& scales, const Buffer& biases,
+                          Buffer& out, size_t M, size_t N, size_t K, const ir::QuantParams& params) const override;
+    void gather_op(const Buffer& table, const Buffer& indices, Buffer& out, size_t V, size_t D) const override;
+    void concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                   Buffer& out, const backend::View& out_view, int axis) const override;
+    void gather_axis_op(const Buffer& tensor, const backend::View& tv,
+                        const Buffer& indices,
+                        Buffer& out, const backend::View& ov,
+                        int axis) const override;
+    void scatter_axis_op(const Buffer& base, const backend::View& bv,
+                         const Buffer& values, const backend::View& vv,
+                         const Buffer& indices,
+                         Buffer& out, const backend::View& ov,
+                         int axis) const override;
 
     // Generic (materialize a view mapping)
     void copy_view(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) const override;

@@ -14,7 +14,9 @@ enum class DType {
     INT32,
     INT64,
     UINT8,
+    UINT32,
     FLOAT16,
+    BFLOAT16,
     FLOAT32,
     FLOAT64,
     BOOL8,
@@ -23,30 +25,34 @@ enum class DType {
 
 inline const char* to_string(DType dt) {
     switch (dt) {
-        case DType::INT8:    return "int8";
-        case DType::INT32:   return "int32";
-        case DType::INT64:   return "int64";
-        case DType::UINT8:   return "uint8";
-        case DType::FLOAT16: return "float16";
-        case DType::FLOAT32: return "float32";
-        case DType::FLOAT64: return "float64";
-        case DType::BOOL8:   return "bool8";
-        default:             return "unknown";
+        case DType::INT8:     return "int8";
+        case DType::INT32:    return "int32";
+        case DType::INT64:    return "int64";
+        case DType::UINT8:    return "uint8";
+        case DType::UINT32:   return "uint32";
+        case DType::FLOAT16:  return "float16";
+        case DType::BFLOAT16: return "bfloat16";
+        case DType::FLOAT32:  return "float32";
+        case DType::FLOAT64:  return "float64";
+        case DType::BOOL8:    return "bool8";
+        default:              return "unknown";
     }
 }
 
 // Size in bytes.
 inline constexpr size_t size(DType dtype) {
     switch (dtype) {
-        case DType::INT8:    return sizeof(int8_t);
-        case DType::INT32:   return sizeof(int32_t);
-        case DType::INT64:   return sizeof(int64_t);
-        case DType::UINT8:   return sizeof(uint8_t);
-        case DType::FLOAT16: return 2;
-        case DType::FLOAT32: return sizeof(float);
-        case DType::FLOAT64: return sizeof(double);
-        case DType::BOOL8:   return sizeof(uint8_t);
-        default:             return 0;
+        case DType::INT8:     return sizeof(int8_t);
+        case DType::INT32:    return sizeof(int32_t);
+        case DType::INT64:    return sizeof(int64_t);
+        case DType::UINT8:    return sizeof(uint8_t);
+        case DType::UINT32:   return sizeof(uint32_t);
+        case DType::FLOAT16:  return 2;
+        case DType::BFLOAT16: return 2;
+        case DType::FLOAT32:  return sizeof(float);
+        case DType::FLOAT64:  return sizeof(double);
+        case DType::BOOL8:    return sizeof(uint8_t);
+        default:              return 0;
     }
 }
 
@@ -69,6 +75,7 @@ constexpr DType dtype_of() {
     else if constexpr (std::is_same<U, int32_t>::value) return DType::INT32;
     else if constexpr (std::is_same<U, int64_t>::value) return DType::INT64;
     else if constexpr (std::is_same<U, uint8_t>::value) return DType::UINT8;
+    else if constexpr (std::is_same<U, uint32_t>::value) return DType::UINT32;
     else if constexpr (std::is_same<U, bool>::value)    return DType::BOOL8;
     else return DType::UNKNOWN;
 }

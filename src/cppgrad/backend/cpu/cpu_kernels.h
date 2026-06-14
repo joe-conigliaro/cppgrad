@@ -786,6 +786,46 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
     }
 }
 
+// Convert a bfloat16 (top 16 bits of an IEEE-754 float32) to float32.
+inline float bf16_to_f32(uint16_t h) {
+    uint32_t bits = static_cast<uint32_t>(h) << 16;
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// Mixed-precision matmul: A = float32, B = bfloat16 (uint16 storage), Out = float32.
+// Lets large model weights stay resident as bf16 (half the memory of fp32) while activations
+// and accumulation remain float32. Stride-aware generic path (correctness first; the tiled
+// fast paths in matmul_view_kernel can be specialised later if this becomes hot).
+inline void matmul_view_kernel_f32_bf16(const Buffer& a, const backend::View& va,
+                                        const Buffer& b, const backend::View& vb,
+                                        Buffer& out, const backend::View& vo) {
+    const float*    ap = static_cast<const float*>(a.data());
+    const uint16_t* bp = static_cast<const uint16_t*>(b.data());
+    float*          op = static_cast<float*>(out.data());
+
+    const size_t M = (size_t)va.shape[0];
+    const size_t K = (size_t)va.shape[1];
+    const size_t N = (size_t)vb.shape[1];
+
+    cpu::parallel_for((size_t)0, M, [&](size_t i0, size_t i1) {
+        for (size_t i = i0; i < i1; ++i) {
+            const size_t a_row = (size_t)va.offset + i * (size_t)va.strides[0];
+            const size_t o_row = (size_t)vo.offset + i * (size_t)vo.strides[0];
+            for (size_t j = 0; j < N; ++j) {
+                const size_t b_col = (size_t)vb.offset + j * (size_t)vb.strides[1];
+                float sum = 0.0f;
+                for (size_t k = 0; k < K; ++k) {
+                    sum += ap[a_row + k * (size_t)va.strides[1]] *
+                           bf16_to_f32(bp[b_col + k * (size_t)vb.strides[0]]);
+                }
+                op[o_row + j * (size_t)vo.strides[1]] = sum;
+            }
+        }
+    });
+}
+
 template<typename T>
 inline void permute_view_kernel(const Buffer& a, const backend::View& va,
                                 Buffer& out, const backend::View& vo,
@@ -917,6 +957,160 @@ inline void copy_view_kernel(const Buffer& src, const backend::View& vs, Buffer&
 
     //     dp[di] = sp[si];
     // }
+}
+
+// Concat: copy each input's elements to the correct position in output along axis
+template<typename T>
+inline void concat_kernel(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                          Buffer& out, const backend::View& out_view, int axis) {
+    const size_t rank = out_view.rank;
+    const size_t nout = out_view.numel;
+    if (!nout) return;
+
+    std::vector<const T*> in_ptrs;
+    in_ptrs.reserve(inputs.size());
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        in_ptrs.push_back(static_cast<const T*>(inputs[i]->data()));
+    }
+    T* op = static_cast<T*>(out.data());
+
+    // Compute cumulative sizes along concat axis
+    std::vector<size_t> cum_sizes(inputs.size() + 1, 0);
+    for (size_t i = 0; i < inputs.size(); ++i) {
+        cum_sizes[i + 1] = cum_sizes[i] + input_views[i].shape[axis];
+    }
+
+    std::vector<uint32_t> out_shape(out_view.shape, out_view.shape + out_view.rank);
+    cpu::parallel_for((size_t)0, nout, [&](size_t s, size_t e) {
+        std::vector<size_t> ocoords;
+        for (size_t lin = s; lin < e; ++lin) {
+            coords_from_linear(lin, out_shape, ocoords);
+
+            // Find which input this output element belongs to
+            size_t coord_axis = ocoords[axis];
+            size_t input_idx = 0;
+            for (; input_idx < inputs.size(); ++input_idx) {
+                if (coord_axis < cum_sizes[input_idx + 1]) break;
+            }
+
+            // Map to input coordinates
+            std::vector<size_t> icoords(rank);
+            for (size_t d = 0; d < rank; ++d) {
+                if (d == static_cast<size_t>(axis)) {
+                    icoords[d] = coord_axis - cum_sizes[input_idx];
+                } else {
+                    icoords[d] = ocoords[d];
+                }
+            }
+
+            const size_t si = index_from_coords(input_views[input_idx], icoords);
+            const size_t oi = index_from_coords(out_view, ocoords);
+            op[oi] = in_ptrs[input_idx][si];
+        }
+    });
+}
+// Gather along axis: select elements at integer indices along specified axis
+template<typename T>
+inline void gather_axis_kernel(const Buffer &tensor, const backend::View &tv,
+                                const Buffer &indices_buf,
+                                Buffer &out, const backend::View &ov,
+                                int axis) {
+    const size_t rank = ov.rank;
+    const size_t nout = ov.numel;
+    if (!nout) return;
+
+    const T* t_data = static_cast<const T*>(tensor.data());
+    const int32_t* idx_data = static_cast<const int32_t*>(indices_buf.data());
+    T* o_data = static_cast<T*>(out.data());
+
+    std::vector<uint32_t> out_shape(ov.shape, ov.shape + ov.rank);
+
+    parallel_for((size_t)0, nout, [&](size_t s, size_t e) {
+        for (size_t lin = s; lin < e; ++lin) {
+            std::vector<size_t> ocoords;
+            coords_from_linear(lin, out_shape, ocoords);
+
+            // Map output coords to input coords
+            std::vector<size_t> icoords(rank);
+            for (size_t d = 0; d < rank; ++d) {
+                if (d == static_cast<size_t>(axis)) {
+                    icoords[d] = static_cast<size_t>(idx_data[ocoords[axis]]);
+                } else {
+                    icoords[d] = ocoords[d];
+                }
+            }
+
+            size_t si = index_from_coords(tv, icoords);
+            size_t oi = index_from_coords(ov, ocoords);
+            o_data[oi] = t_data[si];
+        }
+    });
+}
+
+// Scatter along axis: replace elements at indexed positions with values
+template<typename T>
+inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv,
+                                 const Buffer &values, const backend::View &vv,
+                                 const Buffer &indices_buf,
+                                 Buffer &out, const backend::View &ov,
+                                 int axis) {
+    const size_t rank = ov.rank;
+    const size_t nout = ov.numel;
+    if (!nout) return;
+
+    // First copy base to output
+    const T* b_data = static_cast<const T*>(base.data());
+    T* o_data = static_cast<T*>(out.data());
+
+    // Copy base using view
+    if (bv.is_identity() && ov.is_identity()) {
+        std::memcpy(o_data, b_data, nout * sizeof(T));
+    } else {
+        std::vector<uint32_t> base_shape(bv.shape, bv.shape + bv.rank);
+        parallel_for((size_t)0, nout, [&](size_t s, size_t e) {
+            for (size_t lin = s; lin < e; ++lin) {
+                std::vector<size_t> coords;
+                coords_from_linear(lin, base_shape, coords);
+                size_t bi = index_from_coords(bv, coords);
+                size_t oi = index_from_coords(ov, coords);
+                o_data[oi] = b_data[bi];
+            }
+        });
+    }
+
+    // Then scatter values at indexed positions
+    const T* v_data = static_cast<const T*>(values.data());
+    const int32_t* idx_data = static_cast<const int32_t*>(indices_buf.data());
+
+    std::vector<uint32_t> val_shape(vv.shape, vv.shape + vv.rank);
+
+    // For each index position, scatter the corresponding values
+    // Iterate over all positions in the values tensor
+    const size_t nval = vv.numel;
+    parallel_for((size_t)0, nval, [&](size_t s, size_t e) {
+        for (size_t lin = s; lin < e; ++lin) {
+            std::vector<size_t> vcoords;
+            coords_from_linear(lin, val_shape, vcoords);
+
+            // The index along the scatter axis tells us which index to use
+            int32_t scatter_idx = idx_data[vcoords[axis]];
+            if (scatter_idx < 0) continue;
+
+            // Map value coords to output coords
+            std::vector<size_t> ocoords(rank);
+            for (size_t d = 0; d < rank; ++d) {
+                if (d == static_cast<size_t>(axis)) {
+                    ocoords[d] = static_cast<size_t>(scatter_idx);
+                } else {
+                    ocoords[d] = vcoords[d];
+                }
+            }
+
+            size_t vi = index_from_coords(vv, vcoords);
+            size_t oi = index_from_coords(ov, ocoords);
+            o_data[oi] = v_data[vi];
+        }
+    });
 }
 
 

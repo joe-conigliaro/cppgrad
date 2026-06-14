@@ -3,6 +3,7 @@
 #include <cstring>
 #include "cppgrad/backend/cpu/cpu_backend.h"
 #include "cppgrad/backend/cpu/cpu_kernels.h"
+#include "cppgrad/backend/cpu/cpu_quant_kernels.h"
 #include "cppgrad/backend/cpu/dtype_dispatch.h"
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/utils/rng.h"
@@ -82,6 +83,8 @@ void CPUBackend::unary_op(ir::UnaryOpType op_type, const Buffer& a, const backen
                 case ir::UnaryOpType::LOG:  return static_cast<T>(std::log(static_cast<double>(x)));
                 case ir::UnaryOpType::NEG:  return -x;
                 case ir::UnaryOpType::TANH: return static_cast<T>(std::tanh(static_cast<double>(x)));
+                case ir::UnaryOpType::SIN:  return static_cast<T>(std::sin(static_cast<double>(x)));
+                case ir::UnaryOpType::COS:  return static_cast<T>(std::cos(static_cast<double>(x)));
             }
             return x;
         };
@@ -137,79 +140,174 @@ void CPUBackend::reduce_op(ir::ReduceOpType op_type, const Buffer& a, const back
     }));
 }
 
+void CPUBackend::quantized_matmul(const Buffer& a, const Buffer& qweight, const Buffer& scales,
+                                  const Buffer& biases, Buffer& out,
+                                  size_t M, size_t N, size_t K, const ir::QuantParams& params) const {
+    switch (params.scheme) {
+        case ir::QuantScheme::MLX_AFFINE_U8:
+            cpu::matmul_quant_affine_f32(static_cast<const float*>(a.data()),
+                                         static_cast<const uint32_t*>(qweight.data()),
+                                         static_cast<const float*>(scales.data()),
+                                         static_cast<const float*>(biases.data()),
+                                         static_cast<float*>(out.data()), M, N, K, params.group_size);
+            return;
+    }
+    throw std::runtime_error("CPUBackend::quantized_matmul: unsupported quant scheme");
+}
+
 void CPUBackend::matmul(const Buffer& a, const backend::View& va,
                         const Buffer& b, const backend::View& vb,
                         Buffer& out, const backend::View& vo) const {
-    // if (a.dtype() != out.dtype() || b.dtype() != out.dtype())
-    //     throw std::runtime_error("matmul: dtype mismatch");
+    // Mixed precision: large model weights live in memory as bfloat16 (half of fp32) while
+    // activations / accumulation stay float32. The IR sets the matmul output dtype from the
+    // activation (a), so a bf16 weight b with an fp32 a yields an fp32 out here.
+    const bool b_bf16 = (b.dtype() == backend::DType::BFLOAT16 &&
+                         out.dtype() == backend::DType::FLOAT32);
+
+    if (va.rank == 2 && vb.rank == 2 && vo.rank == 2) {
+        if (b_bf16) {
+            cpu::matmul_view_kernel_f32_bf16(a, va, b, vb, out, vo);
+        } else {
+            cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
+                using T = typename decltype(tag)::type;
+                cpu::matmul_view_kernel<T>(a, va, b, vb, out, vo);
+            }));
+        }
+        return;
+    }
+    // N-D batched matmul: collapse leading dims into single batch, loop over batches
+    if (va.rank != vb.rank || va.rank != vo.rank || va.rank < 3)
+        throw std::runtime_error("CPU matmul: all views must have same rank >= 3 for batched matmul");
+
+    const int rank = static_cast<int>(va.rank);
+    const size_t M = va.shape[rank - 2];
+    const size_t K = va.shape[rank - 1];
+    const size_t N = vb.shape[rank - 1];
+
+    // Iterate over the OUTPUT's batch dims (the broadcast result). For each linear batch
+    // index we recover the per-dim indices and sum idx[d]*strides[d] for each operand -
+    // broadcast dims carry stride 0, so this is correct for any number of batch dims and for
+    // A/B broadcasting. (A single collapsed "bi * batch_stride" is only valid when there is
+    // exactly one batch dim; it silently mis-indexes for rank >= 4, e.g. attention's
+    // [batch, heads, seq, dim] matmuls, reading out of bounds.)
+    const int nb = rank - 2;  // number of batch dims
+    size_t batch_count = 1;
+    for (int d = 0; d < nb; ++d) batch_count *= vo.shape[d];
+
+    // Build the rank-2 sub-views for batch index bi (shared by both the fp32 and the
+    // mixed-precision paths).
+    auto build_subviews = [&](size_t bi, backend::View& va2, backend::View& vb2, backend::View& vo2) {
+        size_t a_off = va.offset, b_off = vb.offset, o_off = vo.offset;
+        size_t rem = bi;
+        for (int d = nb - 1; d >= 0; --d) {  // row-major decompose over vo batch dims
+            size_t idx = rem % vo.shape[d];
+            rem /= vo.shape[d];
+            a_off += idx * va.strides[d];
+            b_off += idx * vb.strides[d];
+            o_off += idx * vo.strides[d];
+        }
+        va2.rank = 2; va2.shape[0] = (uint32_t)M; va2.shape[1] = (uint32_t)K;
+        va2.strides[0] = va.strides[rank - 2]; va2.strides[1] = va.strides[rank - 1];
+        va2.offset = (uint32_t)a_off; va2.flags = 0; va2.numel = M * K;
+        vb2.rank = 2; vb2.shape[0] = (uint32_t)K; vb2.shape[1] = (uint32_t)N;
+        vb2.strides[0] = vb.strides[rank - 2]; vb2.strides[1] = vb.strides[rank - 1];
+        vb2.offset = (uint32_t)b_off; vb2.flags = 0; vb2.numel = K * N;
+        vo2.rank = 2; vo2.shape[0] = (uint32_t)M; vo2.shape[1] = (uint32_t)N;
+        vo2.strides[0] = vo.strides[rank - 2]; vo2.strides[1] = vo.strides[rank - 1];
+        vo2.offset = (uint32_t)o_off; vo2.flags = 0; vo2.numel = M * N;
+    };
+
+    if (b_bf16) {
+        cpu::parallel_for((size_t)0, batch_count, [&](size_t s, size_t e) {
+            for (size_t bi = s; bi < e; ++bi) {
+                backend::View va2, vb2, vo2;
+                build_subviews(bi, va2, vb2, vo2);
+                cpu::matmul_view_kernel_f32_bf16(a, va2, b, vb2, out, vo2);
+            }
+        });
+    } else {
+        cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
+            using T = typename decltype(tag)::type;
+            cpu::parallel_for((size_t)0, batch_count, [&](size_t s, size_t e) {
+                for (size_t bi = s; bi < e; ++bi) {
+                    backend::View va2, vb2, vo2;
+                    build_subviews(bi, va2, vb2, vo2);
+                    cpu::matmul_view_kernel<T>(a, va2, b, vb2, out, vo2);
+                }
+            });
+        }));
+    }
+}
+
+void CPUBackend::gather_op(const Buffer& table, const Buffer& indices, Buffer& out, size_t V, size_t D) const {
+    const int32_t* idx = static_cast<const int32_t*>(indices.data());
+    const size_t N = indices.numel();
+
+    // Mixed: bf16 weight table -> fp32 output (embedding kept in bf16 to save memory).
+    if (table.dtype() == backend::DType::BFLOAT16 && out.dtype() == backend::DType::FLOAT32) {
+        const uint16_t* t_ptr = static_cast<const uint16_t*>(table.data());
+        float* o_ptr = static_cast<float*>(out.data());
+        cpu::parallel_for((size_t)0, N, [&](size_t s, size_t e) {
+            for (size_t i = s; i < e; ++i) {
+                const int32_t k = idx[i];
+                if (k < 0 || static_cast<size_t>(k) >= V) {
+                    for (size_t j = 0; j < D; ++j) o_ptr[i * D + j] = 0.0f;
+                } else {
+                    for (size_t j = 0; j < D; ++j) o_ptr[i * D + j] = cpu::bf16_to_f32(t_ptr[k * D + j]);
+                }
+            }
+        });
+        return;
+    }
+
     cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
         using T = typename decltype(tag)::type;
-        cpu::matmul_view_kernel<T>(a, va, b, vb, out, vo);
+        const T* t_ptr = static_cast<const T*>(table.data());
+        T* o_ptr = static_cast<T*>(out.data());
+
+        cpu::parallel_for((size_t)0, N, [&](size_t s, size_t e) {
+            for (size_t i = s; i < e; ++i) {
+                const int32_t k = idx[i];
+                if (k < 0 || static_cast<size_t>(k) >= V) {
+                    // Out of bounds: zero out the row
+                    for (size_t j = 0; j < D; ++j) o_ptr[i * D + j] = T(0);
+                } else {
+                    for (size_t j = 0; j < D; ++j) o_ptr[i * D + j] = t_ptr[k * D + j];
+                }
+            }
+        });
     }));
 }
 
-// Movement ops
+void CPUBackend::concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
+                           Buffer& out, const backend::View& out_view, int axis) const {
+    cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
+        using T = typename decltype(tag)::type;
+        cpu::concat_kernel<T>(inputs, input_views, out, out_view, axis);
+    }));
+}
 
-// void CPUBackend::permute(const Buffer& a, const backend::View& va,
-//                          Buffer& out, const backend::View& vo,
-//                          const std::vector<size_t>& axes) const {
-//     bool identity_axes = true;
-//     for (size_t i=0;i<axes.size();++i) if (axes[i] != i) { identity_axes = false; break; }
-//     if (identity_axes && va.is_contiguous() && vo.is_contiguous() && same_shape(va, vo) &&
-//         va.offset == 0 && vo.offset == 0 && out.size_bytes() == a.size_bytes()) {
-//         if (out.size_bytes()) std::memcpy(out.data(), a.data(), out.size_bytes());
-//         return;
-//     }
-//     cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
-//         using T = typename decltype(tag)::type;
-//         cpu::permute_view_kernel<T>(a, va, out, vo, axes);
-//     }));
-// }
+void CPUBackend::gather_axis_op(const Buffer& tensor, const backend::View& tv,
+                                 const Buffer& indices,
+                                 Buffer& out, const backend::View& ov,
+                                 int axis) const {
+    cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
+        using T = typename decltype(tag)::type;
+        cpu::gather_axis_kernel<T>(tensor, tv, indices, out, ov, axis);
+    }));
+}
 
-// void CPUBackend::broadcast(const Buffer& a, const backend::View& va,
-//                            Buffer& out, const backend::View& vo) const {
-//     // Identity broadcast -> memcpy
-//     if (va.is_contiguous() && vo.is_contiguous() && same_shape(va, vo) &&
-//         va.offset == 0 && vo.offset == 0 && out.size_bytes() == a.size_bytes()) {
-//         if (out.size_bytes()) std::memcpy(out.data(), a.data(), out.size_bytes());
-//         return;
-//     }
-//     cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
-//         using T = typename decltype(tag)::type;
-//         cpu::broadcast_view_kernel<T>(a, va, out, vo);
-//     }));
-// }
+void CPUBackend::scatter_axis_op(const Buffer& base, const backend::View& bv,
+                                  const Buffer& values, const backend::View& vv,
+                                  const Buffer& indices,
+                                  Buffer& out, const backend::View& ov,
+                                  int axis) const {
+    cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
+        using T = typename decltype(tag)::type;
+        cpu::scatter_axis_kernel<T>(base, bv, values, vv, indices, out, ov, axis);
+    }));
+}
 
-// void CPUBackend::slice_forward(const Buffer& a, const backend::View& va,
-//                                Buffer& out, const backend::View& vo,
-//                                const std::vector<size_t>& begin,
-//                                const std::vector<size_t>& /*end*/,
-//                                const std::vector<size_t>& step) const {
-//     bool begin_zero = std::all_of(begin.begin(), begin.end(), [](size_t x){ return x == 0; });
-//     bool step_one   = step.empty() || std::all_of(step.begin(), step.end(), [](size_t x){ return x == 1; });
-//     if (begin_zero && step_one &&
-//         va.is_contiguous() && vo.is_contiguous() && same_shape(va, vo) &&
-//         va.offset == 0 && vo.offset == 0 && out.size_bytes() == a.size_bytes()) {
-//         if (out.size_bytes()) std::memcpy(out.data(), a.data(), out.size_bytes());
-//         return;
-//     }
-
-//     cpu::dispatch_dtype(out.dtype(), make_templated([&](auto tag) {
-//         using T = typename decltype(tag)::type;
-//         cpu::slice_forward_view_kernel<T>(a, va, out, vo, begin);
-//     }));
-// }
-
-// void CPUBackend::slice_backward_scatter_add(const Buffer& grad_out, const backend::View& vgo,
-//                                             Buffer& grad_in,  const backend::View& vgi,
-//                                             const std::vector<size_t>& begin,
-//                                             const std::vector<size_t>& /*end*/,
-//                                             const std::vector<size_t>& /*step*/) const {
-//     cpu::dispatch_dtype(grad_in.dtype(), make_templated([&](auto tag) {
-//         using T = typename decltype(tag)::type;
-//         cpu::slice_backward_scatter_add_view_kernel<T>(grad_out, vgo, grad_in, vgi, begin);
-//     }));
-// }
 
 // Generic view copy
 

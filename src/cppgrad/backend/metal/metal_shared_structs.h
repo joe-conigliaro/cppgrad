@@ -37,6 +37,10 @@ struct MatmulParams {
     View32 b_v;
     View32 o_v;
     unsigned int M, K, N;
+    unsigned int batch;       // number of batch matrices (1 for 2D)
+    unsigned int a_batch_stride; // element stride per batch step in A
+    unsigned int b_batch_stride; // element stride per batch step in B
+    unsigned int o_batch_stride; // element stride per batch step in output
 };
 
 struct BroadcastParams {
@@ -85,6 +89,30 @@ struct ReduceGeneralParams {
     unsigned int  out_total;
     unsigned char is_reduce_axis[8];
     unsigned char pad7[8];
+};
+
+struct ConcatParams {
+    View32  in_views[2];   // up to 2 inputs
+    View32  out_v;
+    unsigned int n;         // total output elements
+    unsigned int num_inputs;
+    unsigned int axis;
+    unsigned int cum_sizes[3]; // cum_sizes[0]=0, cum_sizes[1]=in0[axis], cum_sizes[2]=in0+in1
+};
+
+struct GatherAxisParams {
+    View32  tensor_v;
+    View32  out_v;
+    unsigned int n;          // output elements
+    unsigned int axis;
+};
+
+struct ScatterAxisParams {
+    View32  base_v;
+    View32  values_v;
+    View32  out_v;
+    unsigned int nval;       // value elements to scatter
+    unsigned int axis;
 };
 
 } // namespace metal

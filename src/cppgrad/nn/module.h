@@ -74,7 +74,10 @@ protected:
         if (!param->is_canonical_leaf()) throw std::runtime_error("register_parameter: param must be a canonical leaf");
         if (_parameters.count(name)) throw std::runtime_error("register_parameter: parameter already exists: " + name);
 
-        param->schedule(); // ensure storage exists
+        // Realize storage only if the param already has it; deferred (lazy) params -- created with
+        // allocate_now=false for checkpoint loading -- intentionally have no storage yet and get it
+        // when loaded. (schedule() is a no-op once a buffer exists, and throws for deferred leaves.)
+        if (param->storage_view().buffer) param->schedule();
         param->set_requires_grad(true);
         _parameters[name] = std::move(param);
     }

@@ -637,6 +637,46 @@ void Tensor::backward() {
                         parent_grads = {g};
                         break;
                     }
+                    case UnaryOpType::SIN: {
+                        // d(sin(x))/dx = cos(x) * grad
+                        auto cx = Tensor::make(
+                            UnaryOp{UnaryOpType::COS},
+                            {utils::Ref<const Tensor>(node)},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, cx},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        parent_grads = {g};
+                        break;
+                    }
+                    case UnaryOpType::COS: {
+                        // d(cos(x))/dx = -sin(x) * grad
+                        auto sx = Tensor::make(
+                            UnaryOp{UnaryOpType::SIN},
+                            {utils::Ref<const Tensor>(node)},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto neg_sx = Tensor::make(
+                            UnaryOp{UnaryOpType::NEG},
+                            {sx},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        auto g = Tensor::make(
+                            BinaryOp{BinaryOpType::MUL},
+                            {grad_this, neg_sx},
+                            node->shape(),
+                            node->device_type(),
+                            node->dtype());
+                        parent_grads = {g};
+                        break;
+                    }
                 }
             }
             else if constexpr (std::is_same_v<T, BinaryOp>) {
@@ -899,6 +939,29 @@ void Tensor::backward() {
                     src->device_type(),
                     src->dtype());
                 parent_grads = {back};
+            }
+            else if constexpr (std::is_same_v<T, ConcatOp>) {
+                // Backward: split gradient along axis
+                auto a = children[0];
+                auto b = children[1];
+                int axis = op.axis;
+                const auto& gs = grad_this->shape();
+                int rank = static_cast<int>(gs.size());
+                if (axis < 0) axis += rank;
+
+                // Build begin/end for slicing a's portion
+                std::vector<size_t> begin_a(rank, 0), end_a(rank, 0), begin_b(rank, 0), end_b(rank, 0);
+                for (int d = 0; d < rank; ++d) {
+                    end_a[d] = gs[d];
+                    end_b[d] = gs[d];
+                    begin_b[d] = (d == axis) ? a->shape()[static_cast<size_t>(axis)] : 0;
+                }
+                end_a[axis] = a->shape()[static_cast<size_t>(axis)];
+
+                auto ga = slice(grad_this, begin_a, end_a);
+                auto gb = slice(grad_this, begin_b, end_b);
+
+                parent_grads = {ga, gb};
             }
             else if constexpr (!ir::is_differentiable_v<T>) {
                 parent_grads = {};

@@ -23,11 +23,34 @@ struct LeafOp {};
 // Copy Operation (produces a new output tensor). Can cross devices.
 struct CopyOp {};
 
+struct GatherOp {};  // table[V, D, ...], indices[...] -> output[indices->shape(), D, ...] (gathers along axis 0)
+struct GatherAxisOp { int axis; };  // gather elements along arbitrary axis
+struct ScatterOp { int axis; };  // scatter values into base at indexed positions along axis
+
+struct ConcatOp { int axis; };  // concatenate tensors along axis
+
 // In-place assignment (mutates existing tensor). Same-device only.
 // Used primarily for parameter updates in optimizers (e.g., w -= lr * grad).
 struct AssignOp {};
 
 struct MatMulOp {};
+
+// Quantization scheme descriptor (an op parameter, like RandomParams). The backend dispatches on
+// `scheme` internally, so a new scheme (GPTQ, AWQ, ...) is a kernel branch -- not a virtual per type.
+enum class QuantScheme {
+    MLX_AFFINE_U8,   // MLX 8-bit affine: w = scale*q + bias, unsigned codes, per-group scale/bias
+};
+struct QuantParams {
+    QuantScheme scheme = QuantScheme::MLX_AFFINE_U8;
+    int bits        = 8;    // bits per quantized code
+    int group_size  = 64;   // codes sharing one (scale, bias), along the K (input) dim
+    int pack_factor = 4;    // codes packed per storage word (e.g. 4 u8 per uint32)
+};
+
+// Quantized matmul (inference only, no backward): out = A @ dequant(W)^T. The `params` carry the
+// quant scheme (+ bits/group_size/packing); the backend dispatches on scheme. Inputs: activation
+// [M,K] fp32, packed qweight, and scheme-specific extra buffers (e.g. scales/biases for MLX affine).
+struct QuantizedMatMulOp { QuantParams params; };
 
 enum class RandomOpType { UNIFORM, NORMAL };
 struct UniformParams { float min = 0.f, max = 0.f; };
@@ -36,7 +59,7 @@ struct NormalParams { float mean = 0.f, stddev = 1.f; };
 using RandomParams = std::variant<UniformParams, NormalParams>;
 struct RandomOp { RandomOpType type; RandomParams params; };
 
-enum class UnaryOpType { RELU, EXP, LOG, NEG, TANH };
+enum class UnaryOpType { RELU, EXP, LOG, NEG, TANH, SIN, COS };
 struct UnaryOp { UnaryOpType type; };
 
 enum class BinaryOpType { ADD, SUB, MUL, DIV, POW, CMP_EQ, CMP_GT, MIN, MAX };
@@ -64,18 +87,28 @@ using Op = std::variant<
     CopyOp,
     AssignOp,
     MatMulOp,
+    QuantizedMatMulOp,
     RandomOp,
     UnaryOp,
     BinaryOp,
     ReduceOp,
-    MovementOp
+    MovementOp,
+    GatherOp,
+    GatherAxisOp,
+    ScatterOp,
+    ConcatOp
 >;
 
 inline const char* to_string(const ConstantOp& op) { return "ConstantOp"; }
 inline const char* to_string(const LeafOp& op)     { return "LeafOp"; }
 inline const char* to_string(const CopyOp& op)     { return "CopyOp"; }
+inline const char* to_string(const GatherOp& op)       { return "GatherOp"; }
+inline const char* to_string(const GatherAxisOp& op)   { return "GatherAxisOp"; }
+inline const char* to_string(const ScatterOp& op)      { return "ScatterOp"; }
+inline const char* to_string(const ConcatOp& op)       { return "ConcatOp"; }
 inline const char* to_string(const AssignOp& op)   { return "AssignOp"; }
 inline const char* to_string(const MatMulOp& op)   { return "MatMulOp"; }
+inline const char* to_string(const QuantizedMatMulOp& op) { return "QuantizedMatMulOp"; }
 inline const char* to_string(const RandomOp& op) {
     switch (op.type) {
         case RandomOpType::UNIFORM: return "RandomOp:UNIFORM";
@@ -89,6 +122,8 @@ inline const char* to_string(const UnaryOp& op) {
         case UnaryOpType::LOG:  return "UnaryOp:LOG";
         case UnaryOpType::NEG:  return "UnaryOp:NEG";
         case UnaryOpType::TANH: return "UnaryOp:TANH";
+        case UnaryOpType::SIN:    return "UnaryOp:SIN";
+        case UnaryOpType::COS:    return "UnaryOp:COS";
     }
 }
 inline const char* to_string(const BinaryOp& op) {
@@ -147,7 +182,12 @@ inline constexpr bool is_differentiable_v =
     !std::is_same_v<std::decay_t<T>, ConstantOp> &&
     !std::is_same_v<std::decay_t<T>, RandomOp>   &&
     !std::is_same_v<std::decay_t<T>, LeafOp>     &&
-    !std::is_same_v<std::decay_t<T>, AssignOp>;
+    !std::is_same_v<std::decay_t<T>, AssignOp>  &&
+    !std::is_same_v<std::decay_t<T>, GatherOp> &&
+    !std::is_same_v<std::decay_t<T>, GatherAxisOp> &&
+    !std::is_same_v<std::decay_t<T>, QuantizedMatMulOp> &&
+    !std::is_same_v<std::decay_t<T>, ScatterOp>;
+// ConcatOp is differentiable (backward: split grad along axis).
 // Runtime.
 inline bool is_differentiable(const Op& op_v) {
     return std::visit([](auto&& op) {

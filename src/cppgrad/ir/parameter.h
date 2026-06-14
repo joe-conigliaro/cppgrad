@@ -42,7 +42,6 @@ inline utils::Ref<Tensor> parameterize(const utils::Ref<Tensor>& t) {
     if (!t) throw std::runtime_error("parameterize: null tensor");
 
     if (t->is_canonical_leaf()) {
-        // auto buf = t->schedule();
         auto buf = t->eval();
         if (!buf) throw std::runtime_error("parameterize: canonical leaf without buffer");
         t->set_requires_grad(true);
@@ -50,7 +49,6 @@ inline utils::Ref<Tensor> parameterize(const utils::Ref<Tensor>& t) {
     }
 
     // Realize once and attach to a new leaf
-    // auto buf = t->schedule();
     auto buf = t->eval();
     if (!buf) throw std::runtime_error("parameterize: realization failed (null buffer)");
 

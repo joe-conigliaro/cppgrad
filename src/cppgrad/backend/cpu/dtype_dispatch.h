@@ -20,13 +20,14 @@ inline void dispatch_dtype(backend::DType dt, const F& f) {
     switch (dt) {
         // TODO: add f16 type
         // case backend::DType::FLOAT16: f.template operator()<f16>();   break;
-        case backend::DType::FLOAT32: f.template operator()<float>();   break;
-        case backend::DType::FLOAT64: f.template operator()<double>();  break;
-        case backend::DType::INT8:    f.template operator()<int8_t>();  break;
-        case backend::DType::INT32:   f.template operator()<int32_t>(); break;
-        case backend::DType::INT64:   f.template operator()<int64_t>(); break;
-        case backend::DType::UINT8:   f.template operator()<uint8_t>(); break;
-        case backend::DType::BOOL8:   f.template operator()<uint8_t>(); break;
+        case backend::DType::FLOAT32:  f.template operator()<float>();   break;
+        case backend::DType::FLOAT64:  f.template operator()<double>();  break;
+        case backend::DType::INT8:     f.template operator()<int8_t>();  break;
+        case backend::DType::INT32:    f.template operator()<int32_t>(); break;
+        case backend::DType::INT64:    f.template operator()<int64_t>(); break;
+        case backend::DType::UINT8:    f.template operator()<uint8_t>(); break;
+        case backend::DType::UINT32:   f.template operator()<uint32_t>(); break;
+        case backend::DType::BOOL8:    f.template operator()<uint8_t>(); break;
         default:
             throw std::runtime_error("dispatch_dtype: unsupported dtype");
     }

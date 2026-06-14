@@ -4,8 +4,9 @@
 
 #include <atomic>
 #include <cstddef>
-#include <utility>
 #include <stdexcept>
+#include <type_traits>
+#include <utility>
 
 namespace cppgrad {
 namespace utils {
@@ -42,7 +43,7 @@ public:
     }
 
 private:
-    mutable std::atomic<long> _ref_count;
+    mutable std::atomic<long> _ref_count{0};
 };
 
 // Intrusive Smart Pointer
@@ -52,6 +53,7 @@ public:
     // Constructors
     Ref() : _ptr(nullptr) {}
 
+    // Take ownership (increments ref_count)
     Ref(T* ptr) : _ptr(ptr) {
         if (_ptr) _ptr->inc_ref();
     }

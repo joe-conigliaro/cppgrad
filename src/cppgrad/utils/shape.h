@@ -23,7 +23,12 @@ inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t>& a_shap
         size_t dim_b = (i < b_shape.size()) ? b_shape[b_shape.size() - 1 - i] : 1;
 
         if (dim_a != dim_b && dim_a != 1 && dim_b != 1) {
-            throw std::runtime_error("Shapes are not broadcastable.");
+            std::ostringstream oss;
+            oss << "Shapes are not broadcastable: {";
+            for (size_t j = 0; j < a_shape.size(); ++j) oss << a_shape[j] << " ";
+            oss << "} and {";
+            for (size_t j = 0; j < b_shape.size(); ++j) oss << b_shape[j] << " }";
+            throw std::runtime_error(oss.str());
         }
         out_shape[max_rank - 1 - i] = std::max(dim_a, dim_b);
     }

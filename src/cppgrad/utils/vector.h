@@ -38,21 +38,6 @@ inline size_t numel(const std::vector<size_t>& shape) {
     return std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
 }
 
-inline std::vector<int> normalize_axes(const std::vector<int>& axes, int rank) {
-    std::vector<int> ax = axes;
-    for (int& a : ax) { if (a < 0) a += rank; }
-    // Clamp and validate after normalization
-    for (int a : ax) {
-        if (a < 0 || a >= rank) {
-            throw std::runtime_error("normalize_axes: axis out of bounds");
-        }
-    }
-    std::sort(ax.begin(), ax.end());
-    ax.erase(std::unique(ax.begin(), ax.end()), ax.end());
-    return ax;
-}
-
-
 } // namespace vector
 } // namespace utils
 } // namespace cppgrad
