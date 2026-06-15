@@ -199,10 +199,12 @@ void Tensor::attach_buffer(std::shared_ptr<backend::Buffer> buf) const {
         if (this->numel() == 0) {
             // ok
         } else if (am.offset == 0 && am.contiguous) {
-            // materialized/owned tensor: exact match is a useful invariant
+            // materialized/owned tensor: buffer must hold at least numel elements. Usually exact,
+            // but a contiguous prefix view into a larger pool buffer (e.g. CacheUpdateOp returning
+            // cache[0:end] of a preallocated [0:max_len]) is legitimately backed by a bigger buffer.
             const size_t expect = this->numel();
-            if (cap_elems != expect) {
-                throw std::runtime_error("attach_buffer: buffer elements mismatch (identity tensor)");
+            if (cap_elems < expect) {
+                throw std::runtime_error("attach_buffer: backing buffer too small (identity tensor)");
             }
         } else {
             // view tensor: buffer may be larger, must be large enough

@@ -382,15 +382,35 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
                          const Buffer &biases, Buffer &out,
                          size_t M, size_t N, size_t K, int group_size) const {
     if (out.size_bytes() == 0) return;
+    uint32_t n = (uint32_t)N, k = (uint32_t)K, gs = (uint32_t)group_size;
     ComputeWork work;
+
+    // Decode path (M == 1): coalesced simdgroup GEMV -- one 32-lane threadgroup per output column.
+    if (M == 1) {
+        work.pso = cache->get("matmul_quant_gemv_f32");
+        work.buffers.push_back({as_mtl(a), 0});
+        work.buffers.push_back({as_mtl(qweight), 0});
+        work.buffers.push_back({as_mtl(scales), 0});
+        work.buffers.push_back({as_mtl(biases), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        work.add_bytes(5, &n, sizeof(uint32_t));
+        work.add_bytes(6, &k, sizeof(uint32_t));
+        work.add_bytes(7, &gs, sizeof(uint32_t));
+        work.useThreadgroups = true;
+        work.grid = MTLSizeMake(N, 1, 1);              // one threadgroup per output column
+        work.threadsPerThreadgroup = MTLSizeMake(32, 1, 1);  // one simdgroup
+        encode_submit(work);
+        return;
+    }
+
+    // Prefill / general path: one thread per output element.
     work.pso = cache->get("matmul_quant_f32");
-    // pair is {buffer, byte-offset}; the binding index is the vector position (0..4).
     work.buffers.push_back({as_mtl(a), 0});
     work.buffers.push_back({as_mtl(qweight), 0});
     work.buffers.push_back({as_mtl(scales), 0});
     work.buffers.push_back({as_mtl(biases), 0});
     work.buffers.push_back({as_mtl(out), 0});
-    uint32_t m = (uint32_t)M, n = (uint32_t)N, k = (uint32_t)K, gs = (uint32_t)group_size;
+    uint32_t m = (uint32_t)M;
     work.add_bytes(5, &m, sizeof(uint32_t));
     work.add_bytes(6, &n, sizeof(uint32_t));
     work.add_bytes(7, &k, sizeof(uint32_t));

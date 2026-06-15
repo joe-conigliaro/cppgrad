@@ -3,6 +3,7 @@
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
 #include "cppgrad/backend/metal/metal_execution_context.h"
+#include "cppgrad/utils/profiler.h"
 
 namespace cppgrad {
 namespace backend {
@@ -27,6 +28,7 @@ void MetalExecutionContext::submit_compute(ComputeWork work) {
 
 void MetalExecutionContext::flush() {
     if (!_computeWork.empty()) {
+        if (getenv("QWEN_DISPATCH")) fprintf(stderr, "[dispatch] flush: %zu kernels\n", _computeWork.size());
         id<MTLComputeCommandEncoder> enc = [_commandBuffer computeCommandEncoder];
         for (const auto& work : _computeWork) {
             encode_work(enc, work);
@@ -34,6 +36,12 @@ void MetalExecutionContext::flush() {
         [enc endEncoding];
         [_commandBuffer commit];
         [_commandBuffer waitUntilCompleted];
+
+        // Real GPU time for this batch (profiler is a dev tool; cost only when enabled).
+        if (cppgrad::utils::Profiler::enabled()) {
+            const double gpu_ns = ([_commandBuffer GPUEndTime] - [_commandBuffer GPUStartTime]) * 1e9;
+            cppgrad::utils::Profiler::instance().record("GPU(flush)", gpu_ns, 0, _computeWork.size());
+        }
 
         // The committed command buffer can't accept more work.
         _computeWork.clear();

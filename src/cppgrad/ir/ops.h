@@ -33,6 +33,14 @@ struct ConcatOp { int axis; };  // concatenate tensors along axis
 // Used primarily for parameter updates in optimizers (e.g., w -= lr * grad).
 struct AssignOp {};
 
+// In-place autoregressive cache append. Writes `values` into a preallocated cache buffer
+// at [.., start : start+S, ..] along `axis` and returns a view of the cache covering
+// [.., 0 : start+S, ..]. The write and the read-view are a single atomic node, so there is
+// no read-after-write hazard on the (hazard-naive) executor, and the in-place write makes
+// each decode step O(S) instead of the O(context) copy that ConcatOp incurs per step.
+// Inference only (no backward); batch dim must be 1 (autoregressive decode).
+struct CacheUpdateOp { int axis; size_t start; };
+
 struct MatMulOp {};
 
 // Quantization scheme descriptor (an op parameter, like RandomParams). The backend dispatches on
@@ -86,6 +94,7 @@ using Op = std::variant<
     LeafOp,
     CopyOp,
     AssignOp,
+    CacheUpdateOp,
     MatMulOp,
     QuantizedMatMulOp,
     RandomOp,
@@ -99,15 +108,16 @@ using Op = std::variant<
     ConcatOp
 >;
 
-inline const char* to_string(const ConstantOp& op) { return "ConstantOp"; }
-inline const char* to_string(const LeafOp& op)     { return "LeafOp"; }
-inline const char* to_string(const CopyOp& op)     { return "CopyOp"; }
-inline const char* to_string(const GatherOp& op)       { return "GatherOp"; }
-inline const char* to_string(const GatherAxisOp& op)   { return "GatherAxisOp"; }
-inline const char* to_string(const ScatterOp& op)      { return "ScatterOp"; }
-inline const char* to_string(const ConcatOp& op)       { return "ConcatOp"; }
-inline const char* to_string(const AssignOp& op)   { return "AssignOp"; }
-inline const char* to_string(const MatMulOp& op)   { return "MatMulOp"; }
+inline const char* to_string(const ConstantOp& op)    { return "ConstantOp"; }
+inline const char* to_string(const LeafOp& op)        { return "LeafOp"; }
+inline const char* to_string(const CopyOp& op)        { return "CopyOp"; }
+inline const char* to_string(const GatherOp& op)      { return "GatherOp"; }
+inline const char* to_string(const GatherAxisOp& op)  { return "GatherAxisOp"; }
+inline const char* to_string(const ScatterOp& op)     { return "ScatterOp"; }
+inline const char* to_string(const ConcatOp& op)      { return "ConcatOp"; }
+inline const char* to_string(const AssignOp& op)      { return "AssignOp"; }
+inline const char* to_string(const CacheUpdateOp& op) { return "CacheUpdateOp"; }
+inline const char* to_string(const MatMulOp& op)      { return "MatMulOp"; }
 inline const char* to_string(const QuantizedMatMulOp& op) { return "QuantizedMatMulOp"; }
 inline const char* to_string(const RandomOp& op) {
     switch (op.type) {
@@ -122,8 +132,8 @@ inline const char* to_string(const UnaryOp& op) {
         case UnaryOpType::LOG:  return "UnaryOp:LOG";
         case UnaryOpType::NEG:  return "UnaryOp:NEG";
         case UnaryOpType::TANH: return "UnaryOp:TANH";
-        case UnaryOpType::SIN:    return "UnaryOp:SIN";
-        case UnaryOpType::COS:    return "UnaryOp:COS";
+        case UnaryOpType::SIN:  return "UnaryOp:SIN";
+        case UnaryOpType::COS:  return "UnaryOp:COS";
     }
 }
 inline const char* to_string(const BinaryOp& op) {
@@ -183,6 +193,7 @@ inline constexpr bool is_differentiable_v =
     !std::is_same_v<std::decay_t<T>, RandomOp>   &&
     !std::is_same_v<std::decay_t<T>, LeafOp>     &&
     !std::is_same_v<std::decay_t<T>, AssignOp>  &&
+    !std::is_same_v<std::decay_t<T>, CacheUpdateOp> &&
     !std::is_same_v<std::decay_t<T>, GatherOp> &&
     !std::is_same_v<std::decay_t<T>, GatherAxisOp> &&
     !std::is_same_v<std::decay_t<T>, QuantizedMatMulOp> &&

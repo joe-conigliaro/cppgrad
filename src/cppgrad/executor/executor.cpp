@@ -16,6 +16,15 @@ void Executor::build_schedule_dfs(
     std::vector<utils::Ref<const ir::Tensor>>& order) {
     if (!t || visited.count(t)) return;
     visited.insert(t);
+    // An already-realized node is an immutable value: treat it as a scheduling
+    // boundary (like a leaf) so we neither recompute it nor walk its history.
+    // This turns repeated realize() of overlapping graphs from O(whole-graph)
+    // into O(new-work) -- e.g. autoregressive decode reusing the previous step's
+    // KV nodes, or backward reusing realized forward activations.
+    if (t->realized_buffer()) {
+        order.push_back(t);
+        return;
+    }
     for (const auto& ch : t->children()) {
         build_schedule_dfs(ch, visited, order);
     }

@@ -69,7 +69,7 @@ int main() {
         // degenerate; block weights keep their (frozen) random init.
         uint32_t seed = 999u;
         model.embedding_weight  = rand_tensor({(size_t)cfg.vocab_size, (size_t)cfg.hidden_size}, 0.5f, seed, dev);
-        model.lm_head_weight    = rand_tensor({(size_t)cfg.hidden_size, (size_t)cfg.vocab_size}, 0.5f, seed, dev);
+        model.lm_head_weight.weight = rand_tensor({(size_t)cfg.hidden_size, (size_t)cfg.vocab_size}, 0.5f, seed, dev);
         model.final_norm_weight = rand_tensor({(size_t)cfg.hidden_size}, 0.1f, seed, dev);
 
         std::vector<int32_t> prompt = {3, 7, 1, 9, 2};

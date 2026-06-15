@@ -11,6 +11,16 @@ namespace ir {
 
 utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<const Tensor>& src);
 
+// In-place autoregressive cache append. Writes `values` ([.., S, ..]) into the preallocated
+// contiguous cache leaf at [.., start : start+S, ..] along `axis`, and returns a view of the
+// cache covering [.., 0 : start+S, ..]. Write + read-view are one atomic node (no RAW hazard),
+// making decode O(S) rather than the O(context) copy a ConcatOp incurs each step. Inference
+// only (no backward). Requires batch dim (axis 0) == 1 so the returned prefix view is
+// contiguous from offset 0.
+utils::Ref<Tensor> cache_update(const utils::Ref<const Tensor>& cache,
+                                const utils::Ref<const Tensor>& values,
+                                int axis, size_t start);
+
 // Unary Ops
 utils::Ref<Tensor> relu(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> exp(const utils::Ref<const Tensor>& t);

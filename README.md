@@ -38,8 +38,13 @@ committed (and waited on) **once** at:
 ## LLM inference (Qwen3.5 / 3.6)
 Runs Qwen3.5/3.6 - including the 27B - from MLX `.safetensors` checkpoints via
 `examples/llm/qwen3_inference.cpp` (`--quant` keeps weights 8-bit). Includes a faithful
-GatedDeltaNet linear-attention + full-attention hybrid, a KV / recurrent-state cache, a
-byte-level BPE tokenizer, and an MLX-affine quantized matmul (CPU + Metal).
+GatedDeltaNet linear-attention + full-attention hybrid, an in-place (preallocated) KV /
+recurrent-state cache, a byte-level BPE tokenizer, and an MLX-affine quantized matmul
+(CPU + Metal, with a simdgroup GEMV for single-token decode).
+
+Decode is memory-bandwidth-bound (reading the 8-bit weights is ~85% of traffic); set
+`CPPGRAD_PROFILE=1` for a per-op memory-traffic + GPU-time breakdown, or `QWEN_TIMING=1`
+for prefill/decode tokens-per-second.
 
 ---
 
@@ -109,6 +114,12 @@ int main() {
 Metal is enabled automatically on Apple platforms when `xcrun` is available - the backend is compiled
 in via the `CPPGRAD_WITH_METAL` presence macro. Without it (non-Apple, or no `xcrun`) the build is CPU-only.
 
+### Runtime flags (env)
+Set at run time (not compile time); zero cost when unset.
+- `CPPGRAD_PROFILE=1`: per-op memory-traffic breakdown + GPU time (decode-only for the Qwen example).
+- `QWEN_TIMING=1`: prefill time and decode tokens/sec.
+- `QWEN_DISPATCH=1`: number of Metal kernels dispatched per command-buffer flush.
+
 ### Examples
 Build via the repo script:
 ```sh
@@ -142,11 +153,13 @@ Run via the repo script:
     per-scope command buffers / memory pools, nested-scope isolation, or CPU<->GPU overlap.
     Interface sketch is in `backend.h`.
 - Kernel fusion
-  - Fuse elementwise chains (unary/binary) within schedules.
-- CPU SIMD & BLAS
-  - SIMD elementwise; BLAS (or tiled GEMM) for matmul. The quantized matmul is currently a naive
-    reference (CPU triple-loop / Metal one-thread-per-output); a tiled/threadgroup quant GEMM is the
-    main LLM decode speed lever.
+  - Fuse elementwise chains (unary/binary) within schedules. (Profiling shows this is <7% of
+    quantized-decode memory traffic, so it is a code-quality win, not a decode-speed lever.)
+- CPU SIMD & BLAS / quant GEMM
+  - SIMD elementwise; BLAS (or tiled GEMM) for prefill matmul. Quantized decode uses a coalesced
+    simdgroup GEMV (M=1) on Metal; it currently reaches ~40% of memory bandwidth, so a
+    higher-occupancy variant (larger threadgroups / multiple output columns per threadgroup) is the
+    remaining decode-speed lever. CPU quant matmul is still a triple-loop reference.
 - Autograd coverage (for training)
   - Backward for `GatherOp` (embedding lookup), N-D / batched `MatMul`, and a proper scatter-add
     `SLICE` backward. The library is inference-complete; these gaps block end-to-end LLM training.

@@ -142,22 +142,20 @@ public:
         return o;
     }
 
-    // Full-attention forward with explicit K/V cache in/out. past_k/past_v may be null
-    // (prefill). mask is the additive attention mask (causal for prefill, null for decode).
+    // Full-attention forward with an in-place preallocated K/V cache. k_cache/v_cache are
+    // persistent [1, max_len, n_kv, head_dim] leaves; this step's K/V are written at
+    // [.., start_pos:start_pos+S, ..] and attention reads the [0:start_pos+S] prefix. mask is
+    // the additive attention mask (causal for prefill, null for single-token decode).
     utils::Ref<ir::Tensor> forward_full_cached(
         const utils::Ref<ir::Tensor>& x,
         const utils::Ref<ir::Tensor>& positions,
         const utils::Ref<ir::Tensor>& inv_freq,
         const utils::Ref<ir::Tensor>& mask,
-        const utils::Ref<ir::Tensor>& past_k,
-        const utils::Ref<ir::Tensor>& past_v,
-        utils::Ref<ir::Tensor>& k_out,
-        utils::Ref<ir::Tensor>& v_out)
+        const utils::Ref<ir::Tensor>& k_cache,
+        const utils::Ref<ir::Tensor>& v_cache,
+        size_t start_pos)
     {
-        auto o = forward_full_attention(x, positions, inv_freq, mask, past_k, past_v);
-        k_out = _last_k;
-        v_out = _last_v;
-        return o;
+        return forward_full_attention(x, positions, inv_freq, mask, k_cache, v_cache, start_pos);
     }
 
     LayerType get_layer_type() const { return _layer_type; }
@@ -323,8 +321,9 @@ private:
         const utils::Ref<ir::Tensor>& positions,
         const utils::Ref<ir::Tensor>& inv_freq,
         const utils::Ref<ir::Tensor>& mask,
-        const utils::Ref<ir::Tensor>& past_k = nullptr,
-        const utils::Ref<ir::Tensor>& past_v = nullptr)
+        const utils::Ref<ir::Tensor>& k_cache = nullptr,
+        const utils::Ref<ir::Tensor>& v_cache = nullptr,
+        size_t start_pos = 0)
     {
         const auto& am = _config;
         int32_t H   = am.hidden_size;
@@ -362,16 +361,19 @@ private:
         k = nn::functional::apply_mrope(k, positions, inv_freq,
                                         static_cast<float>(am.partial_rotary_factor), am.mrope_interleaved);
 
-        // KV cache: prepend cached (already RoPE'd) K/V, then store the extended cache.
-        if (past_k) k = ir::concat(past_k, k, 1);   // [B, S_kv, nKV, D]
-        if (past_v) v = ir::concat(past_v, v, 1);
-        _last_k = k;
-        _last_v = v;
+        // KV cache: write this step's (already-RoPE'd) K/V into the preallocated cache in place
+        // at [.., start_pos:start_pos+S, ..], then read back the [0:start_pos+S] prefix. This is
+        // O(S) per step (no growing concat copy). With no cache (plain forward) use K/V directly.
+        auto k_full = k, v_full = v;
+        if (k_cache) {
+            k_full = ir::cache_update(k_cache, k, /*axis=*/1, start_pos);   // [1, start_pos+S, nKV, D]
+            v_full = ir::cache_update(v_cache, v, /*axis=*/1, start_pos);
+        }
 
-        auto k_rep = k, v_rep = v;
+        auto k_rep = k_full, v_rep = v_full;
         if (n_rep > 1) {
-            k_rep = nn::functional::repeat_kv(k, (size_t)n_rep);
-            v_rep = nn::functional::repeat_kv(v, (size_t)n_rep);
+            k_rep = nn::functional::repeat_kv(k_full, (size_t)n_rep);
+            v_rep = nn::functional::repeat_kv(v_full, (size_t)n_rep);
         }
 
         auto attn_out = nn::functional::scaled_dot_product_attention(q, k_rep, v_rep, mask);  // [B,S,nH,D]
@@ -537,10 +539,6 @@ private:
     // conv input frames. Accessible after forward().
     utils::Ref<ir::Tensor> _last_linear_state;
     utils::Ref<ir::Tensor> _last_conv_state;
-
-    // Full-attention K/V cache (post-RoPE, pre-repeat_kv): [B, S_kv, n_kv_heads, head_dim].
-    utils::Ref<ir::Tensor> _last_k;
-    utils::Ref<ir::Tensor> _last_v;
 };
 
 } // namespace qwen

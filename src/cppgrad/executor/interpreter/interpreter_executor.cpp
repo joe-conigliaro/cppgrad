@@ -2,7 +2,18 @@
 // https://github.com/joe-conigliaro
 #include <iostream>
 #include <unordered_map>
+#include <algorithm>
+#include <vector>
+#include <string>
+#include <map>
+#include <tuple>
+#include <cstdio>
+#include <cstdlib>
 #include "cppgrad/executor/interpreter/interpreter_executor.h"
+#include "cppgrad/ir/graph_context.h"
+#include "cppgrad/ir/grad_mode.h"
+#include "cppgrad/backend/dtype.h"
+#include "cppgrad/utils/profiler.h"
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/backend/backend.h"
 #include "cppgrad/backend/buffer.h"
@@ -29,6 +40,9 @@ void InterpreterExecutor::realize_many(const std::vector<utils::Ref<const cppgra
 
 void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& schedules) {
     std::unordered_map<utils::Ref<const ir::Tensor>, std::shared_ptr<backend::Buffer>> realized;
+    const bool profile_on = cppgrad::utils::Profiler::enabled();  // per-op memory-traffic profiling
+    // Persistent (process-lifetime) cache of immutable constant buffers. See the ConstantOp branch.
+    static std::map<std::tuple<int,int,size_t,double>, std::shared_ptr<backend::Buffer>> const_cache;
 
     auto get_buf = [&](const utils::Ref<const cppgrad::ir::Tensor>& t) -> std::shared_ptr<backend::Buffer> {
         if (!t) return nullptr;
@@ -45,6 +59,13 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
         for (const auto& t : ds.schedule) {
             if (!t) continue;
             if (realized.count(t)) continue;
+
+            // Already realized (this call's DFS boundary, or carried over from a
+            // prior realize): reuse the buffer instead of recomputing. Realized
+            // nodes are immutable values, so this is safe; it is what makes
+            // overlapping re-realizes (decode KV reuse, backward reusing forward
+            // activations) O(new-work) rather than O(whole-graph).
+            if (auto b = t->realized_buffer()) { realized[t] = b; continue; }
 
             if (std::holds_alternative<cppgrad::ir::LeafOp>(t->op())) {
                 if (!t->realized_buffer() && t->numel() > 0) {
@@ -81,8 +102,29 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     if (op.type == cppgrad::ir::ConstantOpType::SCALAR && (t->numel() != 1 || !t->shape().empty())) {
                         throw std::runtime_error("InterpreterExecutor: ConstantOp of type SCALAR must be rank-0 scalar");
                     }
-                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
-                    out_device->backend()->fill(*out_buf, float(op.value));
+                    // Constants are immutable and overwhelmingly repeat (the `1.0` in every sigmoid,
+                    // eps, per-layer scale factors, zero-pads). Cache the filled buffer by
+                    // (device, dtype, numel, value) so we dispatch one fill per distinct constant
+                    // instead of one per occurrence per step (~1600 fills/decode-step otherwise).
+                    // Buffers are shared read-only and kept alive by the cache's shared_ptr. Gated to
+                    // no-grad regions (inference: generate() runs under NoGradScope). In grad-enabled
+                    // regions (training forward/backward) we keep the plain per-node fill, so the
+                    // autograd tape never shares constant storage across nodes.
+                    if (!cppgrad::ir::GradMode::enabled) {
+                        auto key = std::make_tuple((int)t->device_type(), (int)t->dtype(),
+                                                   t->numel(), op.value);
+                        auto it = const_cache.find(key);
+                        if (it != const_cache.end()) {
+                            out_buf = it->second;
+                        } else {
+                            out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                            out_device->backend()->fill(*out_buf, float(op.value));
+                            const_cache.emplace(key, out_buf);
+                        }
+                    } else {
+                        out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                        out_device->backend()->fill(*out_buf, float(op.value));
+                    }
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::RandomOp>) {
                     out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
@@ -168,6 +210,28 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                         }
                     }
                 }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::CacheUpdateOp>) {
+                    // In-place append: write values into the preallocated cache at
+                    // [.., start:start+S, ..] along op.axis, then return the cache buffer.
+                    // The node's own access_meta already describes the [.., 0:start+S, ..]
+                    // read view (contiguous from 0, batch dim 1).
+                    auto cache_t = t->children()[0];
+                    auto val_t   = t->children()[1];
+                    auto cache_buf = parents[0];
+                    auto val_buf   = parents[1];
+                    std::vector<size_t> begin(cache_t->shape().size(), 0);
+                    std::vector<size_t> end = cache_t->shape();
+                    const size_t S = val_t->shape()[op.axis];
+                    begin[op.axis] = op.start;
+                    end[op.axis]   = op.start + S;
+                    auto write_am = cppgrad::ir::AccessMeta::slice_from(
+                        cache_t->access_meta(), begin, end,
+                        std::vector<size_t>(cache_t->shape().size(), 1));
+                    auto vdst = backend::View::from(write_am);
+                    auto vsrc = backend::View::from(val_t->access_meta());
+                    out_device->backend()->copy_view(*val_buf, vsrc, *cache_buf, vdst);
+                    out_buf = cache_buf;
+                }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::AssignOp>) {
                     auto dst_tensor = t->children()[0];
                     auto src_tensor = t->children()[1];
@@ -228,6 +292,15 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
 
             t->attach_buffer(out_buf);
             realized[t] = out_buf;
+
+            if (profile_on) {
+                // Memory traffic moved by this op = output + all inputs (the cost proxy in a
+                // bandwidth-bound regime). Time is left to region scopes / backend GPU hooks.
+                uint64_t bytes = (uint64_t)t->numel() * backend::size(t->dtype());
+                for (const auto& c : t->children())
+                    if (c) bytes += (uint64_t)c->numel() * backend::size(c->dtype());
+                cppgrad::utils::Profiler::instance().record(cppgrad::ir::to_string(t->op()), 0.0, bytes);
+            }
         }
     }
 }

@@ -41,6 +41,28 @@ utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<
     return Tensor::make(AssignOp{}, {dst, src}, dst->shape(), dst->device_type(), dst->dtype());
 }
 
+utils::Ref<Tensor> cache_update(const utils::Ref<const Tensor>& cache,
+                                const utils::Ref<const Tensor>& values,
+                                int axis, size_t start) {
+    if (ir::GradMode::enabled) throw std::runtime_error(
+        "cache_update: forbidden in grad mode (in-place op, no backward).");
+    if (!cache->is_canonical_leaf()) throw std::runtime_error("cache_update: cache must be a canonical leaf");
+    if (cache->shape().size() != values->shape().size()) throw std::runtime_error("cache_update: rank mismatch");
+    if (cache->dtype() != values->dtype()) throw std::runtime_error("cache_update: dtype mismatch");
+    if (cache->device_type() != values->device_type()) throw std::runtime_error("cache_update: device mismatch");
+    if (cache->shape()[0] != 1) throw std::runtime_error("cache_update: requires batch dim 1 (autoregressive decode)");
+    const auto& cshape = cache->shape();
+    size_t S = values->shape()[axis];
+    size_t end = start + S;
+    if (end > cshape[axis]) throw std::runtime_error("cache_update: write past end of preallocated cache");
+    // Returned read view = cache[.., 0:end, ..]. With batch dim 1 this prefix is physically
+    // contiguous from offset 0, so downstream reshape / repeat_kv see a dense tensor.
+    std::vector<size_t> out_shape(cshape.begin(), cshape.end());
+    out_shape[axis] = end;
+    auto am = AccessMeta::contiguous_from(out_shape, /*offset=*/0);
+    return Tensor::make(CacheUpdateOp{axis, start}, {cache, values}, am, cache->device_type(), cache->dtype());
+}
+
 // Unary Ops
 utils::Ref<Tensor> relu(const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::RELU, t); }
 utils::Ref<Tensor> exp (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::EXP,  t); }

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,8 @@
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/parameter.h"
+#include "cppgrad/ir/grad_mode.h"
+#include "cppgrad/utils/profiler.h"
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/io/safetensors.h"
 #include "cppgrad/nn/llm/qwen/qwen3_config.h"
@@ -39,7 +42,7 @@ class Qwen3Model : public Module {
 public:
     utils::Ref<ir::Tensor> embedding_weight;
     utils::Ref<ir::Tensor> final_norm_weight;
-    utils::Ref<ir::Tensor> lm_head_weight;
+    QLinear lm_head_weight;   // dense or quantized (quantized avoids a strided transpose-view GEMV)
 
     // lazy_weights=true: construct all parameters with deferred (unallocated) storage and no random
     // init, so a large checkpoint can be loaded without first materializing the full fp32 weight set
@@ -58,8 +61,8 @@ public:
         register_parameter("embedding_weight", embedding_weight);
 
         // LM head
-        lm_head_weight = ir::parameter({(size_t)H, (size_t)V}, device_type, F32, !lazy_weights);
-        register_parameter("lm_head_weight", lm_head_weight);
+        lm_head_weight.weight = ir::parameter({(size_t)H, (size_t)V}, device_type, F32, !lazy_weights);
+        register_parameter("lm_head_weight", lm_head_weight.weight);
 
         // Final norm
         final_norm_weight = lazy_weights ? ir::parameter({(size_t)H}, device_type, F32, false)
@@ -78,8 +81,10 @@ public:
         _inv_freq = precompute_inv_freq(config);
     }
 
-    // Per-layer autoregressive cache. Full-attention layers use {k,v} (post-RoPE K/V),
-    // linear-attention layers use {state,conv} (recurrent + conv state). Unused slots stay null.
+    // Per-layer autoregressive cache. Full-attention layers use {k,v}: preallocated
+    // [1, max_len, n_kv, head_dim] leaves written in place by start_pos (see generate()).
+    // Linear-attention layers use {state,conv} (fixed-size recurrent + conv state, chained
+    // as graph values). Unused slots stay null.
     struct LayerCache {
         utils::Ref<ir::Tensor> k, v, state, conv;
     };
@@ -99,25 +104,67 @@ public:
     // recompute (validated in tests/test_qwen3_kv_cache.cpp), but O(n) instead of O(n^2).
     std::vector<int32_t> generate(std::vector<int32_t> input_ids,
                                    int32_t max_new_tokens = 20) {
+        ir::NoGradScope no_grad;   // inference: no autograd; required by in-place cache_update
         std::vector<int32_t> generated;
         generated.reserve(max_new_tokens);
         std::vector<LayerCache> caches(_blocks.size());
 
+        // Preallocate the full-attention K/V cache once: a fixed [1, max_len, n_kv, head_dim] leaf
+        // per full-attention layer, written in place each step (no growing concat -> O(1) append,
+        // bounded memory). Linear-attention state/conv caches are already fixed-size and stay null
+        // here (allocated lazily inside the block on first step).
+        const size_t max_len = input_ids.size() + (size_t)max_new_tokens;
+        const size_t nKV = (size_t)_config.num_key_value_heads;
+        const size_t Dh  = (size_t)_config.head_dim;
+        for (size_t i = 0; i < _blocks.size(); ++i) {
+            if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
+                caches[i].k = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+                caches[i].v = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+                caches[i].k->set_requires_grad(false);
+                caches[i].v->set_requires_grad(false);
+            }
+        }
+
+        // QWEN_TIMING=1 -> print prefill time and decode tokens/sec (argmax_at forces a sync each step).
+        const bool timing = std::getenv("QWEN_TIMING") != nullptr;
+        using clk = std::chrono::steady_clock;
+        auto ms = [](clk::time_point a, clk::time_point b) {
+            return std::chrono::duration_cast<std::chrono::microseconds>(b - a).count() / 1000.0;
+        };
+
         // -- prefill the prompt (causal) --
         size_t S = input_ids.size();
+        auto t_pre = clk::now();
         auto in_t = ir::from_vector<int32_t>(input_ids, {1, S}, _device_type);
         auto h = run_layers(in_t, create_position_ids(S), (S > 1) ? make_causal_mask(S) : nullptr, caches);
         int32_t next = argmax_at(apply_head(h), S - 1);
         generated.push_back(next);
+        if (timing) std::fprintf(stderr, "[timing] prefill %zu tok: %.1f ms\n", S, ms(t_pre, clk::now()));
+
+        // CPPGRAD_PROFILE=1: drop prefill stats so the report reflects decode only.
+        if (utils::Profiler::enabled()) utils::Profiler::instance().reset();
 
         // -- decode one token at a time (no mask: the new token sees all cached keys) --
         size_t cur_len = S;
+        double decode_ms = 0.0;
         for (int32_t t = 1; t < max_new_tokens; ++t) {
+            auto t_dec = clk::now();
             auto in1 = ir::from_vector<int32_t>(std::vector<int32_t>{next}, {1, 1}, _device_type);
-            auto h1 = run_layers(in1, create_position_ids_at((int32_t)cur_len, 1), nullptr, caches);
-            next = argmax_at(apply_head(h1), 0);
+            auto h1 = run_layers(in1, create_position_ids_at((int32_t)cur_len, 1), nullptr, caches, cur_len);
+            next = argmax_at(apply_head(h1), 0);  // argmax_at reads back, forcing the step to complete
+            if (timing) decode_ms += ms(t_dec, clk::now());
             generated.push_back(next);
             ++cur_len;
+        }
+        if (timing && max_new_tokens > 1) {
+            double per = decode_ms / (max_new_tokens - 1);
+            std::fprintf(stderr, "[timing] decode: %.1f ms/tok (%.1f tok/s) over %d tok\n",
+                         per, 1000.0 / per, max_new_tokens - 1);
+        }
+        if (utils::Profiler::enabled()) {
+            char title[64];
+            std::snprintf(title, sizeof(title), "decode profile (%d steps)", max_new_tokens - 1);
+            utils::Profiler::instance().report(stderr, title);
         }
         return generated;
     }
@@ -189,7 +236,7 @@ public:
         set_weight(prefix + "norm.weight", final_norm_weight);
         // lm_head sits one level above `model.` (e.g. language_model.lm_head.weight), not under it.
         std::string head_prefix = uses_lm_prefix ? "language_model." : "";
-        set_weight(head_prefix + "lm_head.weight", lm_head_weight);
+        set_weight(head_prefix + "lm_head.weight", lm_head_weight.weight);
 
         // Per-layer weights
         for (int32_t i = 0; i < _config.num_hidden_layers; ++i) {
@@ -238,7 +285,7 @@ public:
 
         embedding_weight = deq(p + "embed_tokens");                  // bf16 [V,H] (gather)
         bind(final_norm_weight, p + "norm.weight");
-        lm_head_weight = ir::transpose(deq(hp + "lm_head"), 0, 1);   // [V,H] -> [H,V] for matmul
+        bind_q(lm_head_weight, hp + "lm_head");                      // quantized [V,H/4], contiguous
 
         for (int32_t i = 0; i < _config.num_hidden_layers; ++i) {
             const std::string lp = p + "layers." + std::to_string(i) + ".";
@@ -288,14 +335,15 @@ private:
     utils::Ref<ir::Tensor> run_layers(const utils::Ref<ir::Tensor>& input_ids,
                                       const utils::Ref<ir::Tensor>& positions,
                                       const utils::Ref<ir::Tensor>& mask,
-                                      std::vector<LayerCache>& caches) {
+                                      std::vector<LayerCache>& caches,
+                                      size_t start_pos = 0) {
         auto h = embed(input_ids);
         for (size_t i = 0; i < _blocks.size(); ++i) {
             auto& c = caches[i];
             if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
-                utils::Ref<ir::Tensor> nk, nv;
-                h = _blocks[i]->forward_full_cached(h, positions, _inv_freq, mask, c.k, c.v, nk, nv);
-                c.k = nk; c.v = nv;
+                // Full-attention K/V cache is a preallocated leaf written in place at start_pos
+                // (null in the non-cached forward() path -> plain prefill, no cache).
+                h = _blocks[i]->forward_full_cached(h, positions, _inv_freq, mask, c.k, c.v, start_pos);
             } else {
                 utils::Ref<ir::Tensor> ns, nc;
                 h = _blocks[i]->forward_linear_cached(h, c.state, c.conv, ns, nc);
@@ -324,7 +372,7 @@ private:
         auto normed = nn::functional::rms_norm(h, final_norm_weight, static_cast<float>(_config.rms_norm_eps));
         size_t B = normed->shape()[0], S = normed->shape()[1];
         auto h_flat = ir::reshape(normed, {B * S, (size_t)_config.hidden_size});
-        auto logits = ir::matmul(h_flat, lm_head_weight);
+        auto logits = lm_head_weight.forward(h_flat);
         logits = ir::reshape(logits, {B, S, (size_t)_config.vocab_size});
         return logits;
     }
