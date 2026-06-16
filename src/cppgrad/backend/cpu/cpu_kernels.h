@@ -6,6 +6,7 @@
 #include <vector>
 #include <numeric>
 #include <cstring>
+#include <stdexcept>
 #include <algorithm>
 #include <functional>
 

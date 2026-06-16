@@ -5,6 +5,7 @@
 #include <vector>
 #include <random>
 #include <cmath>
+#include <stdexcept>
 
 struct MoonsParams {
     int n_samples = 1000; // total points

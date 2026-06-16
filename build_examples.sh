@@ -25,7 +25,7 @@ if [ "$ON_APPLE" = "true" ]; then
     fi
 else
     # Build command for other platforms (Linux).
-    $CXX $CXXFLAGS $INCLUDE_FLAGS $LIB_CPP_SOURCES "$test_src" -o "$OUT_BIN"
+    $CXX $CXXFLAGS $INCLUDE_FLAGS $LIB_CPP_SOURCES "$example_src" -o "$OUT_BIN"
 fi
 
 echo "Running: $OUT_BIN"

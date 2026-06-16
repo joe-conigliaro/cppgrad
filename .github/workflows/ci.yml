@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            nlohmann-json3-dev \
+            libpcre2-dev
+
+      - name: Build & Run Tests
+        run: |
+          make -j$(nproc) tests
+        env:
+          CXX: clang++
+
+      - name: Build & Run Examples
+        run: |
+          make -j$(nproc) examples
+        env:
+          CXX: clang++

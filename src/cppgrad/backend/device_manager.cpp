@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
 #include <iostream>
+#include <stdexcept>
 #include "cppgrad/backend/device_manager.h"
 
 // Backends self-register at static-initialization time (see each backend's *_registration.{cpp,mm}).

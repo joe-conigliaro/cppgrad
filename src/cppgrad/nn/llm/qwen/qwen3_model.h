@@ -1,13 +1,14 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cmath>
 #include <chrono>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
 
 #include "cppgrad/nn/module.h"
 #include "cppgrad/nn/embedding.h"

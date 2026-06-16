@@ -1,9 +1,10 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
 #include <string>
 #include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <stdexcept>
 
 namespace cppgrad {
 namespace nn {

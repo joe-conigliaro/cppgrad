@@ -2,11 +2,11 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <cstddef>
-#include <cstdio>
-#include <cstdlib>
 #include <cmath>
+#include <cstdio>
 #include <vector>
+#include <cstddef>
+#include <cstdlib>
 #include "cppgrad/nn/module.h"
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/functional.h"

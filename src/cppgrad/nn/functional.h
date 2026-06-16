@@ -2,7 +2,9 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
+#include <cmath>
 #include <numeric>
+#include <stdexcept>
 #include "cppgrad/ir/tensor_operators.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/tensor_ops.h"

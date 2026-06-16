@@ -1,8 +1,8 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
+#include <string>
 #include <numeric>
 #include <stdexcept>
-#include <string>
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/ops.h"

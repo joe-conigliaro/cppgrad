@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
 #include <cstring>
+#include <stdexcept>
 #include "cppgrad/backend/cpu/cpu_allocator.h"
 #include "cppgrad/backend/buffer.h"
 

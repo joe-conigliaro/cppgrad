@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <vector>
+#include <stdexcept>
 #include "cppgrad/backend/device.h"
 #include "cppgrad/backend/dtype.h"
 #include "cppgrad/utils/vector.h"

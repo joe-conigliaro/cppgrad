@@ -13,6 +13,11 @@
 using namespace cppgrad;
 
 int main() {
+    #if !defined(CPPGRAD_WITH_METAL)
+        std::cout << "[SKIPPED] CPU vs Metal ops - Metal backend not available" << std::endl;
+        return 0;
+    #endif
+
     try {
         backend::DeviceManager::instance().init();
         Tolerances tol{1e-6, 1e-5};

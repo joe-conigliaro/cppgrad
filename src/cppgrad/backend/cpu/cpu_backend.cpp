@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
+#include <cmath>
 #include <cstring>
+#include <stdexcept>
 #include "cppgrad/backend/cpu/cpu_backend.h"
 #include "cppgrad/backend/cpu/cpu_kernels.h"
 #include "cppgrad/backend/cpu/cpu_quant_kernels.h"

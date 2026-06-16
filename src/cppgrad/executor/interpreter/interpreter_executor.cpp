@@ -12,6 +12,7 @@
 #include "cppgrad/executor/interpreter/interpreter_executor.h"
 #include "cppgrad/ir/graph_context.h"
 #include "cppgrad/ir/grad_mode.h"
+#include "cppgrad/backend/copy.h"
 #include "cppgrad/backend/dtype.h"
 #include "cppgrad/utils/profiler.h"
 #include "cppgrad/backend/device_manager.h"
@@ -199,7 +200,9 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
 
                         // tmp src (identity) -> tmp dst (identity)
                         auto tmp_dst = out_device->allocator()->allocate(t->numel(), t->dtype());
-                        out_device->allocator()->copy_device_to_device(*tmp_dst, *tmp_src);
+                        // TODO: do we want to avoid device lookup fron copy helper? and see src_device...
+                        // out_device->allocator()->copy_device_to_device(*tmp_dst, *tmp_src);
+                        backend::copy(*tmp_dst, *tmp_src);
 
                         // tmp dest (identity) -> output device
                         if (vd.is_identity()) {
