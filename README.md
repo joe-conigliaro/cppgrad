@@ -44,6 +44,34 @@ Decode is memory-bandwidth-bound (reading the 8-bit weights is ~85% of traffic);
 `CPPGRAD_PROFILE=1` for a per-op memory-traffic + GPU-time breakdown, or `QWEN_TIMING=1`
 for prefill/decode tokens-per-second.
 
+### Example - Qwen3.6-27B-8bit
+```sh
+./build/examples/llm/qwen3_inference \
+    --model /path/to/models/mlx-community/Qwen3.6-27B-8bit \
+    --config 27b_qwen3_6 \
+    --prompt "An elephant is" \
+    --max-tokens 28 \
+    --quant
+```
+<details>
+<summary><b>View Expected Output</b></summary>
+
+```text
+CPU device registered.
+METAL device registered.
+[Qwen3.5/3.6] Config: 27b_qwen3_6 hidden=5120 layers=64 heads=24 kv_heads=4 head_dim=256
+Default device set to: METAL
+[Qwen3.5/3.6] Device: METAL
+[Qwen3.5/3.6] Creating model...
+[Qwen3.5/3.6] Loading weights from: /path/to/models/mlx-community/Qwen3.6-27B-8bit
+[Qwen3.5/3.6] Weights loaded in 7222ms
+[Qwen3] Prompt: "An elephant is" -> 3 tokens (BPE)
+[Qwen3.5/3.6] Generating 28 tokens...
+[Qwen3] Generated 28 tokens in 4726ms
+[Qwen3] Output:  a large mammal belonging to the family Elephantidae. The only living species are the African bush elephant (Loxodonta africana),
+```
+</details>
+
 ---
 
 ## Quickstart
@@ -120,21 +148,44 @@ Set at run time (not compile time); zero cost when unset.
 - `QWEN_TIMING=1`: prefill time and decode tokens/sec.
 - `QWEN_KV_CONCAT=1`: use the concat KV-cache reference path instead of the default in-place cache (cross-check).
 
-### Examples
-Build via the repo script:
-```sh
-# Release
-./build_examples.sh
+### Building and Running
 
-# Debug
-DEBUG=true ./build_examples.sh
+All builds use the `Makefile` (incremental, parallel, static library).
+
+```sh
+# Build + run everything
+make all
+
+# Tests
+make tests                # build + run all tests
+make build-tests          # build only
+make run-tests            # run only
+
+# Examples
+make examples             # build + run all examples
+make examples-except-llm  # skip the heavy Qwen example
+make build-examples       # build only
+make run-examples         # run only
+
+# Cleanup
+make clean
 ```
 
-### Unit Tests
-Run via the repo script:
+Every target accepts the build flags above via environment variables:
+
 ```sh
-./run_tests.sh
+# Debug build
+DEBUG=true make tests
+
+# AddressSanitizer
+SANITIZE_ADDRESS=true make build-tests
+
+# Disable fast-math
+FAST_MATH=false make examples
 ```
+
+Binaries are emitted under `build/`, mirroring source paths
+(e.g. `build/examples/llm/qwen3_inference`).
 
 ---
 

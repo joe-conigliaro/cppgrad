@@ -12,9 +12,6 @@
 #   make run-tests           - run already-built tests
 #   make run-examples        - run already-built examples
 #   make clean               - remove build/
-#
-# The scripts/build_common.sh is kept for interactive use; this Makefile
-# duplicates the flag logic so each binary compiles independently in parallel.
 
 SHELL := /bin/sh
 
