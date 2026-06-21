@@ -242,6 +242,9 @@ void Tensor::set_parameter_data(const std::shared_ptr<backend::Buffer>& src) {
     _sv.buffer = src;
     _op = LeafOp{};
     _sv.access_meta = AccessMeta::contiguous_from(this->shape(), 0);
+    // Clear children to detach from the computation graph - a re-tagged leaf must not
+    // keep the upstream graph alive through refcounted children references.
+    _children.clear();
 
     #ifdef CPPGRAD_DEBUG
         if (!is_canonical_leaf()) throw std::runtime_error("copy_into_parameter: non-canonical param view");
@@ -273,6 +276,8 @@ void Tensor::copy_into_parameter(const std::shared_ptr<backend::Buffer>& src) {
 
     _op = LeafOp{};
     _sv.access_meta = AccessMeta::contiguous_from(this->shape(), 0);
+    // Clear children to detach from the computation graph.
+    _children.clear();
 
     #ifdef CPPGRAD_DEBUG
         if (!is_canonical_leaf()) throw std::runtime_error("copy_into_parameter: non-canonical param view");

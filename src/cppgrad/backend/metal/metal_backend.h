@@ -52,6 +52,7 @@ public:
     void rand_normal(Buffer& out, float mean, float stddev) const override;
 
     void flush_pending() const override;
+    void set_buffer_debug_label(const Buffer& buf, const char* label) const override;
 
 private:
     struct Impl;

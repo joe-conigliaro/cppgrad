@@ -28,7 +28,27 @@ void MetalExecutionContext::submit_compute(ComputeWork work) {
 
 void MetalExecutionContext::flush() {
     if (!_computeWork.empty()) {
-        if (getenv("QWEN_DISPATCH")) fprintf(stderr, "[dispatch] flush: %zu kernels\n", _computeWork.size());
+        if (getenv("CPPGRAD_METAL_DISPATCH")) fprintf(stderr, "[metal] flush: %zu kernels\n", _computeWork.size());
+
+        // CPPGRAD_METAL_CAPTURE=N captures the Nth flush to /tmp/cppgrad_flush.gputrace for Xcode.
+        // Run with METAL_CAPTURE_ENABLED=1. The command buffer is (re)created INSIDE the capture
+        // scope so its commands are instrumented.
+        static int s_fi = 0; ++s_fi;
+        const char* cap = getenv("CPPGRAD_METAL_CAPTURE");
+        MTLCaptureManager* capMgr = nil;
+        if (cap && atoi(cap) == s_fi) {
+            capMgr = [MTLCaptureManager sharedCaptureManager];
+            MTLCaptureDescriptor* d = [[MTLCaptureDescriptor alloc] init];
+            d.captureObject = _queue;
+            d.destination = MTLCaptureDestinationGPUTraceDocument;
+            d.outputURL = [NSURL fileURLWithPath:@"/tmp/cppgrad_flush.gputrace"];
+            NSError* err = nil;
+            if ([capMgr startCaptureWithDescriptor:d error:&err]) {
+                fprintf(stderr, "[metal] capture flush %d (%zu kernels) -> /tmp/cppgrad_flush.gputrace\n", s_fi, _computeWork.size());
+                _commandBuffer = [_queue commandBuffer];   // create inside capture scope
+            } else { fprintf(stderr, "[metal] capture start failed: %s\n", err.localizedDescription.UTF8String); capMgr = nil; }
+        }
+
         id<MTLComputeCommandEncoder> enc = [_commandBuffer computeCommandEncoder];
         for (const auto& work : _computeWork) {
             encode_work(enc, work);
@@ -36,6 +56,21 @@ void MetalExecutionContext::flush() {
         [enc endEncoding];
         [_commandBuffer commit];
         [_commandBuffer waitUntilCompleted];
+
+        // A GPU fault (e.g. an out-of-bounds kernel access) fails the command buffer silently:
+        // no exception, and every op after the fault leaves its output buffer unwritten (reads as
+        // zero). Surface it loudly - garbage results are otherwise undetectable. Reading status
+        // after the wait we already do is free; the description is only built on failure.
+        if (_commandBuffer.status != MTLCommandBufferStatusCompleted) {
+            NSError* cbErr = _commandBuffer.error;
+            fprintf(stderr, "[metal] command buffer did not complete: status=%ld error=%s (domain=%s code=%ld) [%zu kernels]\n",
+                    (long)_commandBuffer.status,
+                    cbErr ? cbErr.localizedDescription.UTF8String : "(none)",
+                    cbErr ? cbErr.domain.UTF8String : "(none)",
+                    cbErr ? (long)cbErr.code : 0L, _computeWork.size());
+        }
+
+        if (capMgr) { [capMgr stopCapture]; fprintf(stderr, "[metal] capture done\n"); }
 
         // Real GPU time for this batch (profiler is a dev tool; cost only when enabled).
         if (cppgrad::utils::Profiler::enabled()) {

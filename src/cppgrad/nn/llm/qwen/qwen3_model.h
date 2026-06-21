@@ -1,14 +1,13 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <chrono>
 #include <string>
 #include <vector>
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <stdexcept>
 
 #include "cppgrad/nn/module.h"
 #include "cppgrad/nn/embedding.h"
@@ -20,6 +19,7 @@
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/utils/profiler.h"
 #include "cppgrad/backend/device_manager.h"
+#include "cppgrad/backend/backend.h"
 #include "cppgrad/io/safetensors.h"
 #include "cppgrad/nn/llm/qwen/qwen3_config.h"
 #include "cppgrad/nn/llm/qwen/qwen3_block.h"
@@ -44,6 +44,11 @@ public:
     utils::Ref<ir::Tensor> embedding_weight;
     utils::Ref<ir::Tensor> final_norm_weight;
     QLinear lm_head_weight;   // dense or quantized (quantized avoids a strided transpose-view GEMV)
+
+    // KV-cache strategy for generate(): true = in-place writes into a preallocated [1,max_len,nKV,D]
+    // cache (O(1) append, default). false = concat reference path (O(n) copy per step). Set false
+    // via QWEN_KV_CONCAT to cross-check the two paths.
+    bool inplace_kv = true;
 
     // lazy_weights=true: construct all parameters with deferred (unallocated) storage and no random
     // init, so a large checkpoint can be loaded without first materializing the full fp32 weight set
@@ -106,23 +111,31 @@ public:
     std::vector<int32_t> generate(std::vector<int32_t> input_ids,
                                    int32_t max_new_tokens = 20) {
         ir::NoGradScope no_grad;   // inference: no autograd; required by in-place cache_update
+        if (std::getenv("QWEN_KV_CONCAT")) inplace_kv = false;   // opt out to the concat reference path
         std::vector<int32_t> generated;
         generated.reserve(max_new_tokens);
         std::vector<LayerCache> caches(_blocks.size());
 
-        // Preallocate the full-attention K/V cache once: a fixed [1, max_len, n_kv, head_dim] leaf
-        // per full-attention layer, written in place each step (no growing concat -> O(1) append,
-        // bounded memory). Linear-attention state/conv caches are already fixed-size and stay null
-        // here (allocated lazily inside the block on first step).
-        const size_t max_len = input_ids.size() + (size_t)max_new_tokens;
-        const size_t nKV = (size_t)_config.num_key_value_heads;
-        const size_t Dh  = (size_t)_config.head_dim;
-        for (size_t i = 0; i < _blocks.size(); ++i) {
-            if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
-                caches[i].k = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
-                caches[i].v = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
-                caches[i].k->set_requires_grad(false);
-                caches[i].v->set_requires_grad(false);
+        // In-place mode: preallocate the full-attention K/V cache once: a fixed
+        // [1, max_len, n_kv, head_dim] leaf per full-attention layer, written in place each step
+        // (O(1) append). Concat mode leaves caches null (filled by growing concat on first step).
+        if (inplace_kv) {
+            const size_t max_len = input_ids.size() + (size_t)max_new_tokens;
+            const size_t nKV = (size_t)_config.num_key_value_heads;
+            const size_t Dh  = (size_t)_config.head_dim;
+            auto* cap_dev = std::getenv("CPPGRAD_METAL_CAPTURE") ? backend::DeviceManager::device(_device_type) : nullptr;
+            for (size_t i = 0; i < _blocks.size(); ++i) {
+                if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
+                    caches[i].k = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+                    caches[i].v = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+                    caches[i].k->set_requires_grad(false);
+                    caches[i].v->set_requires_grad(false);
+                    if (cap_dev) {  // label so the cache is searchable in a GPU capture
+                        std::string lk = "kvK_L" + std::to_string(i), lv = "kvV_L" + std::to_string(i);
+                        cap_dev->backend()->set_buffer_debug_label(*caches[i].k->realized_buffer(), lk.c_str());
+                        cap_dev->backend()->set_buffer_debug_label(*caches[i].v->realized_buffer(), lv.c_str());
+                    }
+                }
             }
         }
 
@@ -151,8 +164,15 @@ public:
         for (int32_t t = 1; t < max_new_tokens; ++t) {
             auto t_dec = clk::now();
             auto in1 = ir::from_vector<int32_t>(std::vector<int32_t>{next}, {1, 1}, _device_type);
+            dbg_layers = std::getenv("QWEN_DEBUG") && t == 1;   // collect per-layer magnitudes on step 1
+            _dbg_red.clear();
             auto h1 = run_layers(in1, create_position_ids_at((int32_t)cur_len, 1), nullptr, caches, cur_len);
             next = argmax_at(apply_head(h1), 0);  // argmax_at reads back, forcing the step to complete
+            if (dbg_layers) {  // read the per-layer sum-of-squares AFTER the step (true batched h)
+                for (size_t li = 0; li < _dbg_red.size(); ++li)
+                    std::fprintf(stderr, "[dbg] step1 layer %zu  sum(h^2)=%g\n", li, _dbg_red[li]->item<float>());
+                _dbg_red.clear();
+            }
             if (timing) decode_ms += ms(t_dec, clk::now());
             generated.push_back(next);
             ++cur_len;
@@ -342,17 +362,29 @@ private:
         for (size_t i = 0; i < _blocks.size(); ++i) {
             auto& c = caches[i];
             if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
-                // Full-attention K/V cache is a preallocated leaf written in place at start_pos
-                // (null in the non-cached forward() path -> plain prefill, no cache).
-                h = _blocks[i]->forward_full_cached(h, positions, _inv_freq, mask, c.k, c.v, start_pos);
+                if (inplace_kv && c.k) {
+                    // In-place: preallocated cache leaf written at start_pos.
+                    h = _blocks[i]->forward_full_cached(h, positions, _inv_freq, mask, c.k, c.v, start_pos);
+                } else {
+                    // Concat: prepend past K/V and store the extended cache (also the forward() path).
+                    utils::Ref<ir::Tensor> nk, nv;
+                    h = _blocks[i]->forward_full_cached_concat(h, positions, _inv_freq, mask, c.k, c.v, nk, nv);
+                    c.k = nk; c.v = nv;
+                }
             } else {
                 utils::Ref<ir::Tensor> ns, nc;
                 h = _blocks[i]->forward_linear_cached(h, c.state, c.conv, ns, nc);
                 c.state = ns; c.conv = nc;
             }
+            // DEBUG (QWEN_DEBUG): per-layer magnitude as a GRAPH node (sum of squares of h). Realized
+            // together with the step (not per-layer) so it observes the TRUE batched h without an
+            // intervening flush that would hide the bug. Read after the step in generate().
+            if (dbg_layers) _dbg_red.push_back(ir::sum(ir::mul(h, h)));
         }
         return h;
     }
+    bool dbg_layers = false;
+    std::vector<utils::Ref<ir::Tensor>> _dbg_red;
 
     // Additive causal mask [1,1,S,S]: 0 on/below the diagonal, large negative above.
     utils::Ref<ir::Tensor> make_causal_mask(size_t S) {

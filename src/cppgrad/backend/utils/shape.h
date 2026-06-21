@@ -1,3 +1,11 @@
+// Copyright (c) 2026 Joe Conigliaro
+// https://github.com/joe-conigliaro
+#pragma once
+
+namespace cppgrad {
+namespace backend {
+namespace utils {
+
 inline void coords_from_linear_fixed(size_t lin, const backend::View& v, uint32_t* coords) {
     // row-major unravel with v.shape[]
     for (int i = (int)v.rank - 1; i >= 0; --i) {
@@ -30,3 +38,7 @@ inline void map_out_to_in_coords_broadcast_fixed(const uint32_t* outc,
         inc[ii] = (vi.shape[ii] == 1) ? 0 : outc[oi];
     }
 }
+
+} // namespace utils
+} // namespace backend
+} // namespace cppgrad

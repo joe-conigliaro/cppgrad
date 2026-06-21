@@ -69,14 +69,14 @@ template<typename T>
 constexpr DType dtype_of() {
     // using U = std::remove_cvref_t<T>; // C++20
     using U = std::remove_cv_t<std::remove_reference_t<T>>; // C++17
-    if      constexpr (std::is_same<U, float>::value)   return DType::FLOAT32;
-    else if constexpr (std::is_same<U, double>::value)  return DType::FLOAT64;
-    else if constexpr (std::is_same<U, int8_t>::value)  return DType::INT8;
-    else if constexpr (std::is_same<U, int32_t>::value) return DType::INT32;
-    else if constexpr (std::is_same<U, int64_t>::value) return DType::INT64;
-    else if constexpr (std::is_same<U, uint8_t>::value) return DType::UINT8;
+    if      constexpr (std::is_same<U, float>::value)    return DType::FLOAT32;
+    else if constexpr (std::is_same<U, double>::value)   return DType::FLOAT64;
+    else if constexpr (std::is_same<U, int8_t>::value)   return DType::INT8;
+    else if constexpr (std::is_same<U, int32_t>::value)  return DType::INT32;
+    else if constexpr (std::is_same<U, int64_t>::value)  return DType::INT64;
+    else if constexpr (std::is_same<U, uint8_t>::value)  return DType::UINT8;
     else if constexpr (std::is_same<U, uint32_t>::value) return DType::UINT32;
-    else if constexpr (std::is_same<U, bool>::value)    return DType::BOOL8;
+    else if constexpr (std::is_same<U, bool>::value)     return DType::BOOL8;
     else return DType::UNKNOWN;
 }
 

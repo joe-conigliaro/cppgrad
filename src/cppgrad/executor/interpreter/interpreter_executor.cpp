@@ -296,6 +296,13 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
             t->attach_buffer(out_buf);
             realized[t] = out_buf;
 
+            // No-grad only: now that this node's buffer holds its value, drop its child references
+            // so the upstream graph frees as soon as it is no longer reachable. Keeps long
+            // autoregressive chains (e.g. the per-step KV ConcatOp chain) at O(n) memory instead of
+            // O(n^2). The `realized` map keeps any still-needed node alive for the rest of this call;
+            // backward (grad mode) needs the children, so it is skipped there.
+            if (!cppgrad::ir::GradMode::enabled) t->detach_children();
+
             if (profile_on) {
                 // Memory traffic moved by this op = output + all inputs (the cost proxy in a
                 // bandwidth-bound regime). Time is left to region scopes / backend GPU hooks.

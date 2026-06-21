@@ -2,11 +2,11 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <cmath>
-#include <cstdio>
-#include <vector>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
+#include <cmath>
+#include <vector>
 #include "cppgrad/nn/module.h"
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/functional.h"
@@ -156,6 +156,23 @@ public:
         size_t start_pos)
     {
         return forward_full_attention(x, positions, inv_freq, mask, k_cache, v_cache, start_pos);
+    }
+
+    // Concat-mode K/V cache (reference path for the in-place repro / correctness comparison).
+    utils::Ref<ir::Tensor> forward_full_cached_concat(
+        const utils::Ref<ir::Tensor>& x,
+        const utils::Ref<ir::Tensor>& positions,
+        const utils::Ref<ir::Tensor>& inv_freq,
+        const utils::Ref<ir::Tensor>& mask,
+        const utils::Ref<ir::Tensor>& past_k,
+        const utils::Ref<ir::Tensor>& past_v,
+        utils::Ref<ir::Tensor>& k_out,
+        utils::Ref<ir::Tensor>& v_out)
+    {
+        auto o = forward_full_attention(x, positions, inv_freq, mask, nullptr, nullptr, 0, past_k, past_v);
+        k_out = _last_k;
+        v_out = _last_v;
+        return o;
     }
 
     LayerType get_layer_type() const { return _layer_type; }
@@ -321,9 +338,11 @@ private:
         const utils::Ref<ir::Tensor>& positions,
         const utils::Ref<ir::Tensor>& inv_freq,
         const utils::Ref<ir::Tensor>& mask,
-        const utils::Ref<ir::Tensor>& k_cache = nullptr,
+        const utils::Ref<ir::Tensor>& k_cache = nullptr,   // in-place mode: preallocated cache leaf
         const utils::Ref<ir::Tensor>& v_cache = nullptr,
-        size_t start_pos = 0)
+        size_t start_pos = 0,
+        const utils::Ref<ir::Tensor>& past_k = nullptr,    // concat mode: previous K/V to prepend
+        const utils::Ref<ir::Tensor>& past_v = nullptr)
     {
         const auto& am = _config;
         int32_t H   = am.hidden_size;
@@ -368,7 +387,12 @@ private:
         if (k_cache) {
             k_full = ir::cache_update(k_cache, k, /*axis=*/1, start_pos);   // [1, start_pos+S, nKV, D]
             v_full = ir::cache_update(v_cache, v, /*axis=*/1, start_pos);
+        } else if (past_k) {                          // concat mode (reference / non-in-place)
+            k_full = ir::concat(past_k, k, 1);
+            v_full = ir::concat(past_v, v, 1);
         }
+        _last_k = k_full;   // for concat-mode caching (forward_full_cached_concat)
+        _last_v = v_full;
 
         auto k_rep = k_full, v_rep = v_full;
         if (n_rep > 1) {
@@ -539,6 +563,8 @@ private:
     // conv input frames. Accessible after forward().
     utils::Ref<ir::Tensor> _last_linear_state;
     utils::Ref<ir::Tensor> _last_conv_state;
+    utils::Ref<ir::Tensor> _last_k;   // concat-mode full-attn K/V cache (for the non-in-place path)
+    utils::Ref<ir::Tensor> _last_v;
 };
 
 } // namespace qwen

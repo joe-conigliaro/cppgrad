@@ -1,11 +1,9 @@
 # cppgrad
-
 A small C++17 autograd + neural-network library.
 
----
+![CI - main branch](https://github.com/joe-conigliaro/cppgrad/actions/workflows/ci.yml/badge.svg?branch=main)
 
 ## Overview
-
 - **IR-style graph**: Ops create new `Tensor` nodes with child links.
 - **Intrusive ref counting**: Graph ownership via `utils::Ref<T>`.
 - **Batch realization**: `GraphContext` / `GraphScope` batches execution.
@@ -117,8 +115,10 @@ in via the `CPPGRAD_WITH_METAL` presence macro. Without it (non-Apple, or no `xc
 ### Runtime flags (env)
 Set at run time (not compile time); zero cost when unset.
 - `CPPGRAD_PROFILE=1`: per-op memory-traffic breakdown + GPU time (decode-only for the Qwen example).
+- `CPPGRAD_METAL_DISPATCH=1`: number of Metal kernels dispatched per command-buffer flush.
+- `CPPGRAD_METAL_CAPTURE=N`: capture the Nth command-buffer flush to `/tmp/cppgrad_flush.gputrace` (open in Xcode; run with `METAL_CAPTURE_ENABLED=1`).
 - `QWEN_TIMING=1`: prefill time and decode tokens/sec.
-- `QWEN_DISPATCH=1`: number of Metal kernels dispatched per command-buffer flush.
+- `QWEN_KV_CONCAT=1`: use the concat KV-cache reference path instead of the default in-place cache (cross-check).
 
 ### Examples
 Build via the repo script:

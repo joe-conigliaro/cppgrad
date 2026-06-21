@@ -45,7 +45,10 @@ public:
     // flush_pending() but able to own per-scope resources, and still leaving the
     // IR layer backend-agnostic.
     virtual void flush_pending() const {}
-    
+
+    // Attach a debug label to a buffer (visible in Xcode GPU captures). No-op by default.
+    virtual void set_buffer_debug_label(const Buffer& /*buf*/, const char* /*label*/) const {}
+
     // Data Ops
     virtual void copy(Buffer &dst, const Buffer &src) const { cppgrad::backend::copy(dst, src); } // Use backend copy util by default
     virtual void fill(Buffer &buf, double value) const = 0;

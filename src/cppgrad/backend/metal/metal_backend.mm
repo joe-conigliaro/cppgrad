@@ -337,14 +337,18 @@ const backend::View &vd) const {
     CopyViewParams P{};
     pack_view32(vs, P.src_v);
     pack_view32(vd, P.dst_v);
-    P.n = (unsigned int)dst.numel();
+    // Iterate over the destination view region, not the destination buffer. For an in-place
+    // write into a sub-region of a larger buffer (e.g. cache_update into a preallocated
+    // [1,max_len,nKV,D] KV cache) dst.numel() is the whole buffer, which would launch excess
+    // threads whose out-of-shape coords index past the source buffer -> GPU page fault.
+    P.n = (unsigned int)vd.numel;
 
     ComputeWork work;
     work.pso = cache->get("copy_view_f32");
     work.buffers.push_back({as_mtl(src), 0});
     work.buffers.push_back({as_mtl(dst), 0});
     work.add_bytes(2, &P, sizeof(P));
-    set_linear(work, dst.numel());
+    set_linear(work, vd.numel);
     encode_submit(work);
 }
 
@@ -565,6 +569,11 @@ MetalBackend::~MetalBackend() = default;
 void MetalBackend::flush_pending() const {
     if (_impl->exec_ctx)
         _impl->exec_ctx->flush();
+}
+
+void MetalBackend::set_buffer_debug_label(const Buffer& buf, const char* label) const {
+    id<MTLBuffer> mb = as_mtl(buf);
+    if (mb && label) mb.label = [NSString stringWithUTF8String:label];
 }
 
 // Fill (sync wrapper: uses async submit + await when in async mode).

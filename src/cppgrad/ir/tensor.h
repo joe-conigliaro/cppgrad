@@ -90,6 +90,13 @@ public:
     const Op& op() const noexcept { return _op; }
     const std::vector<utils::Ref<const Tensor>>& children() const noexcept { return _children; }
 
+    // Drop references to child nodes. Only valid once this node is realized (its buffer holds the
+    // value) and outside autograd (backward needs the children). Used by the executor in no-grad to
+    // free the upstream graph as soon as a node is realized, so long autoregressive chains (e.g. the
+    // KV concat chain) stay O(n) memory instead of O(n^2). Like attach_buffer(), mutates a const
+    // node (the graph node is logically frozen once realized).
+    void detach_children() const { const_cast<Tensor*>(this)->_children.clear(); }
+
     // Convenience
     bool is_leaf() const noexcept { return std::holds_alternative<LeafOp>(_op); }
     bool is_canonical_leaf() const {
