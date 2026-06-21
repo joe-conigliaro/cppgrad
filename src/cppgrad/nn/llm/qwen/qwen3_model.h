@@ -43,7 +43,7 @@ class Qwen3Model : public Module {
 public:
     utils::Ref<ir::Tensor> embedding_weight;
     utils::Ref<ir::Tensor> final_norm_weight;
-    QLinear lm_head_weight;   // dense or quantized (quantized avoids a strided transpose-view GEMV)
+    std::shared_ptr<Linear> lm_head;   // dense or quantized (quantized avoids a strided transpose-view GEMV)
 
     // KV-cache strategy for generate(): true = in-place writes into a preallocated [1,max_len,nKV,D]
     // cache (O(1) append, default). false = concat reference path (O(n) copy per step). Set false
@@ -67,8 +67,9 @@ public:
         register_parameter("embedding_weight", embedding_weight);
 
         // LM head
-        lm_head_weight.weight = ir::parameter({(size_t)H, (size_t)V}, device_type, F32, !lazy_weights);
-        register_parameter("lm_head_weight", lm_head_weight.weight);
+        lm_head = std::make_shared<Linear>((size_t)H, (size_t)V, /*use_bias=*/false,
+                                           Init::Default, device_type, lazy_weights);
+        register_module("lm_head", lm_head);
 
         // Final norm
         final_norm_weight = lazy_weights ? ir::parameter({(size_t)H}, device_type, F32, false)
@@ -257,7 +258,7 @@ public:
         set_weight(prefix + "norm.weight", final_norm_weight);
         // lm_head sits one level above `model.` (e.g. language_model.lm_head.weight), not under it.
         std::string head_prefix = uses_lm_prefix ? "language_model." : "";
-        set_weight(head_prefix + "lm_head.weight", lm_head_weight.weight);
+        set_weight(head_prefix + "lm_head.weight", lm_head->weight);
 
         // Per-layer weights
         for (int32_t i = 0; i < _config.num_hidden_layers; ++i) {
@@ -273,7 +274,7 @@ public:
         }
     }
 
-    // Quantized load: keep matmul weights packed (QLinear quantized via ir::quantized_matmul);
+    // Quantized load: keep matmul weights packed (Linear quantized via ir::quantized_matmul);
     // dequantize embeddings (for gather), lm_head, and the per-tensor norms. Expects the raw map
     // (load_from_safetensors(..., quantize=true) loads with dequantize=false).
     void load_weights_quantized(const std::map<std::string, utils::Ref<ir::Tensor>>& W) {
@@ -288,8 +289,8 @@ public:
                 return io::dequant_mlx_affine(w, s, b, _device_type);
             return w;
         };
-        // Bind a QLinear from a packed triple (kept 8-bit).
-        auto bind_q = [&](QLinear& ql, const std::string& base) {
+        // Bind a Linear from a packed triple (kept 8-bit).
+        auto bind_q = [&](Linear& ql, const std::string& base) {
             auto w = find(base + ".weight"), s = find(base + ".scales"), b = find(base + ".biases");
             if (!w || !s || !b) { std::cerr << "[Qwen3Model] WARNING: missing quant triple " << base << "\n"; return; }
             ql.qweight = w; ql.scales = s; ql.biases = b; ql.quantized = true;
@@ -306,7 +307,7 @@ public:
 
         embedding_weight = deq(p + "embed_tokens");                  // bf16 [V,H] (gather)
         bind(final_norm_weight, p + "norm.weight");
-        bind_q(lm_head_weight, hp + "lm_head");                      // quantized [V,H/4], contiguous
+        bind_q(*lm_head, hp + "lm_head");                            // quantized [V,H/4], contiguous
 
         for (int32_t i = 0; i < _config.num_hidden_layers; ++i) {
             const std::string lp = p + "layers." + std::to_string(i) + ".";
@@ -316,13 +317,13 @@ public:
                 bind(blk->fa_norm2_weight, lp + "post_attention_layernorm.weight");
                 bind(blk->fa_q_norm_weight, lp + "self_attn.q_norm.weight");
                 bind(blk->fa_k_norm_weight, lp + "self_attn.k_norm.weight");
-                bind_q(blk->fa_q_proj_weight, lp + "self_attn.q_proj");
-                bind_q(blk->fa_k_proj_weight, lp + "self_attn.k_proj");
-                bind_q(blk->fa_v_proj_weight, lp + "self_attn.v_proj");
-                bind_q(blk->fa_o_proj_weight, lp + "self_attn.o_proj");
-                bind_q(blk->fa_gate_proj_weight, lp + "mlp.gate_proj");
-                bind_q(blk->fa_up_proj_weight, lp + "mlp.up_proj");
-                bind_q(blk->fa_down_proj_weight, lp + "mlp.down_proj");
+                bind_q(*blk->fa_q_proj, lp + "self_attn.q_proj");
+                bind_q(*blk->fa_k_proj, lp + "self_attn.k_proj");
+                bind_q(*blk->fa_v_proj, lp + "self_attn.v_proj");
+                bind_q(*blk->fa_o_proj, lp + "self_attn.o_proj");
+                bind_q(*blk->fa_ffn->gate_proj, lp + "mlp.gate_proj");
+                bind_q(*blk->fa_ffn->up_proj, lp + "mlp.up_proj");
+                bind_q(*blk->fa_ffn->down_proj, lp + "mlp.down_proj");
             } else {
                 bind(blk->la_norm1_weight, lp + "input_layernorm.weight");
                 bind(blk->la_norm2_weight, lp + "post_attention_layernorm.weight");
@@ -330,14 +331,14 @@ public:
                 bind(blk->la_norm_weight, lp + "linear_attn.norm.weight");
                 bind(blk->la_A_log, lp + "linear_attn.A_log");
                 bind(blk->la_dt_bias, lp + "linear_attn.dt_bias");
-                bind_q(blk->la_in_proj_qkv_weight, lp + "linear_attn.in_proj_qkv");
-                bind_q(blk->la_in_proj_a_weight, lp + "linear_attn.in_proj_a");
-                bind_q(blk->la_in_proj_b_weight, lp + "linear_attn.in_proj_b");
-                bind_q(blk->la_in_proj_z_weight, lp + "linear_attn.in_proj_z");
-                bind_q(blk->la_out_proj_weight, lp + "linear_attn.out_proj");
-                bind_q(blk->la_gate_proj_weight, lp + "mlp.gate_proj");
-                bind_q(blk->la_up_proj_weight, lp + "mlp.up_proj");
-                bind_q(blk->la_down_proj_weight, lp + "mlp.down_proj");
+                bind_q(*blk->la_in_proj_qkv, lp + "linear_attn.in_proj_qkv");
+                bind_q(*blk->la_in_proj_a, lp + "linear_attn.in_proj_a");
+                bind_q(*blk->la_in_proj_b, lp + "linear_attn.in_proj_b");
+                bind_q(*blk->la_in_proj_z, lp + "linear_attn.in_proj_z");
+                bind_q(*blk->la_out_proj, lp + "linear_attn.out_proj");
+                bind_q(*blk->la_ffn->gate_proj, lp + "mlp.gate_proj");
+                bind_q(*blk->la_ffn->up_proj, lp + "mlp.up_proj");
+                bind_q(*blk->la_ffn->down_proj, lp + "mlp.down_proj");
             }
         }
     }
@@ -405,7 +406,7 @@ private:
         auto normed = nn::functional::rms_norm(h, final_norm_weight, static_cast<float>(_config.rms_norm_eps));
         size_t B = normed->shape()[0], S = normed->shape()[1];
         auto h_flat = ir::reshape(normed, {B * S, (size_t)_config.hidden_size});
-        auto logits = lm_head_weight.forward(h_flat);
+        auto logits = lm_head->forward(h_flat);
         logits = ir::reshape(logits, {B, S, (size_t)_config.vocab_size});
         return logits;
     }
@@ -454,15 +455,15 @@ private:
     {
         set(p + "input_layernorm.weight",                       block->fa_norm1_weight);
         set(p + "post_attention_layernorm.weight",              block->fa_norm2_weight);
-        set(p + "self_attn.q_proj.weight",                      block->fa_q_proj_weight.weight);
-        set(p + "self_attn.k_proj.weight",                      block->fa_k_proj_weight.weight);
-        set(p + "self_attn.v_proj.weight",                      block->fa_v_proj_weight.weight);
-        set(p + "self_attn.o_proj.weight",                      block->fa_o_proj_weight.weight);
+        set(p + "self_attn.q_proj.weight",                      block->fa_q_proj->weight);
+        set(p + "self_attn.k_proj.weight",                      block->fa_k_proj->weight);
+        set(p + "self_attn.v_proj.weight",                      block->fa_v_proj->weight);
+        set(p + "self_attn.o_proj.weight",                      block->fa_o_proj->weight);
         set(p + "self_attn.q_norm.weight",                      block->fa_q_norm_weight);
         set(p + "self_attn.k_norm.weight",                      block->fa_k_norm_weight);
-        set(p + "mlp.gate_proj.weight",                         block->fa_gate_proj_weight.weight);
-        set(p + "mlp.up_proj.weight",                           block->fa_up_proj_weight.weight);
-        set(p + "mlp.down_proj.weight",                         block->fa_down_proj_weight.weight);
+        set(p + "mlp.gate_proj.weight",                         block->fa_ffn->gate_proj->weight);
+        set(p + "mlp.up_proj.weight",                           block->fa_ffn->up_proj->weight);
+        set(p + "mlp.down_proj.weight",                         block->fa_ffn->down_proj->weight);
     }
 
     // Load weights for a linear-attention layer (Qwen3.5+ only).
@@ -481,17 +482,17 @@ private:
         set(p + "input_layernorm.weight",                       block->la_norm1_weight);
         set(p + "post_attention_layernorm.weight",              block->la_norm2_weight);
         set(p + "linear_attn.conv1d.weight",                    block->la_conv1d_weight);
-        set(p + "linear_attn.in_proj_qkv.weight",               block->la_in_proj_qkv_weight.weight);
-        set(p + "linear_attn.in_proj_a.weight",                 block->la_in_proj_a_weight.weight);
-        set(p + "linear_attn.in_proj_b.weight",                 block->la_in_proj_b_weight.weight);
-        set(p + "linear_attn.in_proj_z.weight",                 block->la_in_proj_z_weight.weight);
+        set(p + "linear_attn.in_proj_qkv.weight",               block->la_in_proj_qkv->weight);
+        set(p + "linear_attn.in_proj_a.weight",                 block->la_in_proj_a->weight);
+        set(p + "linear_attn.in_proj_b.weight",                 block->la_in_proj_b->weight);
+        set(p + "linear_attn.in_proj_z.weight",                 block->la_in_proj_z->weight);
         set(p + "linear_attn.norm.weight",                      block->la_norm_weight);
         set(p + "linear_attn.A_log",                            block->la_A_log);
         set(p + "linear_attn.dt_bias",                          block->la_dt_bias);
-        set(p + "linear_attn.out_proj.weight",                  block->la_out_proj_weight.weight);
-        set(p + "mlp.gate_proj.weight",                         block->la_gate_proj_weight.weight);
-        set(p + "mlp.up_proj.weight",                           block->la_up_proj_weight.weight);
-        set(p + "mlp.down_proj.weight",                         block->la_down_proj_weight.weight);
+        set(p + "linear_attn.out_proj.weight",                  block->la_out_proj->weight);
+        set(p + "mlp.gate_proj.weight",                         block->la_ffn->gate_proj->weight);
+        set(p + "mlp.up_proj.weight",                           block->la_ffn->up_proj->weight);
+        set(p + "mlp.down_proj.weight",                         block->la_ffn->down_proj->weight);
     }
 
     int32_t argmax_last(const utils::Ref<ir::Tensor>& t) {

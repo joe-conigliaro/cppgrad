@@ -117,15 +117,15 @@ public:
 
     // Debug helper: does this pointer come from any of our chunks?
     bool owns(const void* p) const noexcept {
-#ifdef CPPGRAD_DEBUG
-        if (!p) return false;
-        auto addr = reinterpret_cast<std::uintptr_t>(p);
-        for (size_t i = 0; i < _chunks.size(); ++i) {
-            auto base = reinterpret_cast<std::uintptr_t>(_chunks[i].get());
-            auto end  = base + _chunk_sizes[i];
-            if (addr >= base && addr < end) return true;
-        }
-#endif
+        #ifdef CPPGRAD_DEBUG
+            if (!p) return false;
+            auto addr = reinterpret_cast<std::uintptr_t>(p);
+            for (size_t i = 0; i < _chunks.size(); ++i) {
+                auto base = reinterpret_cast<std::uintptr_t>(_chunks[i].get());
+                auto end  = base + _chunk_sizes[i];
+                if (addr >= base && addr < end) return true;
+            }
+        #endif
         return false;
     }
 

@@ -16,7 +16,8 @@
 #include "cppgrad/ir/parameter.h"
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/nn/llm/qwen/qwen3_config.h"
-#include "cppgrad/nn/llm/qwen/qlinear.h"
+#include "cppgrad/nn/linear.h"
+#include "cppgrad/nn/gated_ffn.h"
 
 namespace cppgrad {
 namespace nn {
@@ -39,19 +40,17 @@ public:
     utils::Ref<ir::Tensor> fa_norm2_weight;
 
     // Attention projections (no bias in Qwen3)
-    QLinear fa_q_proj_weight;
-    QLinear fa_k_proj_weight;
-    QLinear fa_v_proj_weight;
-    QLinear fa_o_proj_weight;
+    std::shared_ptr<Linear> fa_q_proj;
+    std::shared_ptr<Linear> fa_k_proj;
+    std::shared_ptr<Linear> fa_v_proj;
+    std::shared_ptr<Linear> fa_o_proj;
 
     // Per-head k / q RMSNorm (Qwen3.5+)
     utils::Ref<ir::Tensor> fa_k_norm_weight;
     utils::Ref<ir::Tensor> fa_q_norm_weight;
 
-    // FFN projections (SwiGLU: gate + up + down)
-    QLinear fa_gate_proj_weight;
-    QLinear fa_up_proj_weight;
-    QLinear fa_down_proj_weight;
+    // FFN (SwiGLU: gate + up + down)
+    std::shared_ptr<GatedFFN> fa_ffn;
 
     // ========== Linear-attention weights ==========
 
@@ -63,10 +62,10 @@ public:
     utils::Ref<ir::Tensor> la_conv1d_weight;
 
     // In-projections  (all [output_dim, hidden])
-    QLinear la_in_proj_qkv_weight;  // QKV combined
-    QLinear la_in_proj_a_weight;    // A for state update
-    QLinear la_in_proj_b_weight;    // B for state update
-    QLinear la_in_proj_z_weight;    // Gate projection
+    std::shared_ptr<Linear> la_in_proj_qkv;  // QKV combined
+    std::shared_ptr<Linear> la_in_proj_a;    // A for state update
+    std::shared_ptr<Linear> la_in_proj_b;    // B for state update
+    std::shared_ptr<Linear> la_in_proj_z;    // Gate projection
 
     // State RMSNorm
     utils::Ref<ir::Tensor> la_norm_weight;
@@ -78,12 +77,10 @@ public:
     utils::Ref<ir::Tensor> la_dt_bias;
 
     // Output projection: [hidden, linear_output_dim]
-    QLinear la_out_proj_weight;
+    std::shared_ptr<Linear> la_out_proj;
 
-    // MLP (dense SwiGLU) -- every decoder layer has one, including linear-attention layers.
-    QLinear la_gate_proj_weight;
-    QLinear la_up_proj_weight;
-    QLinear la_down_proj_weight;
+    // MLP (SwiGLU) -- every decoder layer has one, including linear-attention layers.
+    std::shared_ptr<GatedFFN> la_ffn;
 
     // ========== Constructor ==========
 
@@ -194,13 +191,14 @@ private:
         int32_t I       = _config.intermediate_size;
 
         // Lazy mode: deferred (unallocated) leaf params, no random init -- weights come from load.
-        auto attn_init = [&](std::vector<size_t> shape, float limit) {
-            return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
-                         : ir::parameterize(ir::uniform(shape, -limit, limit, device_type));
-        };
         auto ones_init = [&](std::vector<size_t> shape) {
             return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
                          : ir::parameterize(ir::ones(shape, device_type));
+        };
+        // Bias-free projections; dense (random) or deferred (lazy) per _lazy. A quantized checkpoint
+        // load later fills qweight/scales/biases on each. Weight shape: [in_features, out_features].
+        auto proj = [&](size_t in, size_t out) {
+            return std::make_shared<Linear>(in, out, /*use_bias=*/false, Init::Default, device_type, _lazy);
         };
 
         // -- Norms --
@@ -210,19 +208,15 @@ private:
         register_parameter("fa_norm2_weight", fa_norm2_weight);
 
         // -- Attention projections --
-        // Weight shape: [input_features, output_features] (matches Linear::matmul convention)
-        float qk_limit = 1.0f / std::sqrt(static_cast<float>(H));
-        float o_limit  = 1.0f / std::sqrt(static_cast<float>(n_heads * D));
-
         // q_proj outputs query AND the output gate (Qwen3.5+ attn_output_gate): [H, 2*nH*D].
-        fa_q_proj_weight.weight = attn_init({(size_t)H, (size_t)(2 * n_heads * D)}, qk_limit);
-        fa_k_proj_weight.weight = attn_init({(size_t)H, (size_t)n_kv * D}, qk_limit);
-        fa_v_proj_weight.weight = attn_init({(size_t)H, (size_t)n_kv * D}, qk_limit);
-        fa_o_proj_weight.weight = attn_init({(size_t)n_heads * D, (size_t)H}, o_limit);
-        register_parameter("fa_q_proj_weight", fa_q_proj_weight.weight);
-        register_parameter("fa_k_proj_weight", fa_k_proj_weight.weight);
-        register_parameter("fa_v_proj_weight", fa_v_proj_weight.weight);
-        register_parameter("fa_o_proj_weight", fa_o_proj_weight.weight);
+        fa_q_proj = proj((size_t)H, (size_t)(2 * n_heads * D));
+        fa_k_proj = proj((size_t)H, (size_t)n_kv * D);
+        fa_v_proj = proj((size_t)H, (size_t)n_kv * D);
+        fa_o_proj = proj((size_t)n_heads * D, (size_t)H);
+        register_module("fa_q_proj", fa_q_proj);
+        register_module("fa_k_proj", fa_k_proj);
+        register_module("fa_v_proj", fa_v_proj);
+        register_module("fa_o_proj", fa_o_proj);
 
         // -- Per-head k/q RMSNorm (head_dim each) --
         fa_k_norm_weight = ones_init({(size_t)D});
@@ -230,16 +224,10 @@ private:
         register_parameter("fa_k_norm_weight", fa_k_norm_weight);
         register_parameter("fa_q_norm_weight", fa_q_norm_weight);
 
-        // -- FFN --
-        float ffn_limit  = 1.0f / std::sqrt(static_cast<float>(H));
-        float down_limit = 1.0f / std::sqrt(static_cast<float>(I));
-
-        fa_gate_proj_weight.weight = attn_init({(size_t)H, (size_t)I}, ffn_limit);
-        fa_up_proj_weight.weight    = attn_init({(size_t)H, (size_t)I}, ffn_limit);
-        fa_down_proj_weight.weight = attn_init({(size_t)I, (size_t)H}, down_limit);
-        register_parameter("fa_gate_proj_weight", fa_gate_proj_weight.weight);
-        register_parameter("fa_up_proj_weight", fa_up_proj_weight.weight);
-        register_parameter("fa_down_proj_weight", fa_down_proj_weight.weight);
+        // -- FFN (SwiGLU) --
+        fa_ffn = std::make_shared<GatedFFN>((size_t)H, (size_t)I, (size_t)H,
+                                            GatedFFN::InnerAct::SILU, Init::Default, device_type, _lazy);
+        register_module("fa_ffn", fa_ffn);
     }
 
     // ==================== Linear-attention init ====================
@@ -268,10 +256,6 @@ private:
         // z is the output gate, one value-head vector each: n_v_heads * val_head.
         int32_t z_dim = val_dim;
 
-        auto attn_init = [&](std::vector<size_t> shape, float limit) {
-            return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
-                         : ir::parameterize(ir::uniform(shape, -limit, limit, device_type));
-        };
         auto ones_init = [&](std::vector<size_t> shape) {
             return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
                          : ir::parameterize(ir::ones(shape, device_type));
@@ -279,6 +263,10 @@ private:
         auto zeros_init = [&](std::vector<size_t> shape) {
             return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
                          : ir::parameterize(ir::zeros(shape, device_type));
+        };
+        // Bias-free projections; dense (random) or deferred (lazy). [in_features, out_features].
+        auto proj = [&](size_t in, size_t out) {
+            return std::make_shared<Linear>(in, out, /*use_bias=*/false, Init::Default, device_type, _lazy);
         };
 
         // -- Norms --
@@ -291,17 +279,15 @@ private:
         la_conv1d_weight = ones_init({(size_t)qkv_out_dim, (size_t)conv_k, 1});
         register_parameter("la_conv1d_weight", la_conv1d_weight);
 
-        float lim = 1.0f / std::sqrt(static_cast<float>(H));
-
-        // -- In-projections -- [input_features, output_features]
-        la_in_proj_qkv_weight.weight = attn_init({(size_t)H, (size_t)qkv_out_dim}, lim);
-        la_in_proj_a_weight.weight    = attn_init({(size_t)H, (size_t)ab_dim}, lim);
-        la_in_proj_b_weight.weight    = attn_init({(size_t)H, (size_t)ab_dim}, lim);
-        la_in_proj_z_weight.weight    = attn_init({(size_t)H, (size_t)z_dim}, lim);
-        register_parameter("la_in_proj_qkv_weight", la_in_proj_qkv_weight.weight);
-        register_parameter("la_in_proj_a_weight", la_in_proj_a_weight.weight);
-        register_parameter("la_in_proj_b_weight", la_in_proj_b_weight.weight);
-        register_parameter("la_in_proj_z_weight", la_in_proj_z_weight.weight);
+        // -- In-projections --
+        la_in_proj_qkv = proj((size_t)H, (size_t)qkv_out_dim);
+        la_in_proj_a   = proj((size_t)H, (size_t)ab_dim);
+        la_in_proj_b   = proj((size_t)H, (size_t)ab_dim);
+        la_in_proj_z   = proj((size_t)H, (size_t)z_dim);
+        register_module("la_in_proj_qkv", la_in_proj_qkv);
+        register_module("la_in_proj_a", la_in_proj_a);
+        register_module("la_in_proj_b", la_in_proj_b);
+        register_module("la_in_proj_z", la_in_proj_z);
 
         // -- Gated RMSNorm over the value head dim: [val_head_dim] --
         la_norm_weight = ones_init({(size_t)val_head});
@@ -313,22 +299,15 @@ private:
         register_parameter("la_A_log", la_A_log);
         register_parameter("la_dt_bias", la_dt_bias);
 
-        // -- Output projection: [input_features, output_features] --
-        int32_t out_dim = val_dim;
-        float out_limit = 1.0f / std::sqrt(static_cast<float>(H));
-        la_out_proj_weight.weight = attn_init({(size_t)out_dim, (size_t)H}, out_limit);
-        register_parameter("la_out_proj_weight", la_out_proj_weight.weight);
+        // -- Output projection --
+        la_out_proj = proj((size_t)val_dim, (size_t)H);
+        register_module("la_out_proj", la_out_proj);
 
-        // -- MLP (dense SwiGLU), same as full-attention layers --
+        // -- MLP (SwiGLU), same as full-attention layers --
         int32_t I = am.intermediate_size;
-        float ffn_limit  = 1.0f / std::sqrt(static_cast<float>(H));
-        float down_limit = 1.0f / std::sqrt(static_cast<float>(I));
-        la_gate_proj_weight.weight = attn_init({(size_t)H, (size_t)I}, ffn_limit);
-        la_up_proj_weight.weight    = attn_init({(size_t)H, (size_t)I}, ffn_limit);
-        la_down_proj_weight.weight = attn_init({(size_t)I, (size_t)H}, down_limit);
-        register_parameter("la_gate_proj_weight", la_gate_proj_weight.weight);
-        register_parameter("la_up_proj_weight", la_up_proj_weight.weight);
-        register_parameter("la_down_proj_weight", la_down_proj_weight.weight);
+        la_ffn = std::make_shared<GatedFFN>((size_t)H, (size_t)I, (size_t)H,
+                                            GatedFFN::InnerAct::SILU, Init::Default, device_type, _lazy);
+        register_module("la_ffn", la_ffn);
     }
 
     // ==================== Full-attention forward ====================
@@ -362,13 +341,13 @@ private:
         auto normed = ir::reshape(nn::functional::rms_norm(x, fa_norm1_weight, eps), {B * S, (size_t)H});
 
         // q_proj produces [query | gate] per head: [B,S,nH,2D] -> split into query, gate.
-        auto qg = fa_q_proj_weight.forward(normed);   // [B*S, 2*nH*D]
+        auto qg = fa_q_proj->forward(normed);   // [B*S, 2*nH*D]
         qg = ir::reshape(qg, {B, S, (size_t)nH, (size_t)(2 * D)});
         auto q    = ir::slice(qg, {0, 0, 0, 0},          {B, S, (size_t)nH, (size_t)D});
         auto gate = ir::slice(qg, {0, 0, 0, (size_t)D},  {B, S, (size_t)nH, (size_t)(2 * D)});
 
-        auto k = ir::reshape(fa_k_proj_weight.forward(normed), {B, S, (size_t)nKV, (size_t)D});
-        auto v = ir::reshape(fa_v_proj_weight.forward(normed), {B, S, (size_t)nKV, (size_t)D});
+        auto k = ir::reshape(fa_k_proj->forward(normed), {B, S, (size_t)nKV, (size_t)D});
+        auto v = ir::reshape(fa_v_proj->forward(normed), {B, S, (size_t)nKV, (size_t)D});
 
         // Per-head RMSNorm on Q and K (Qwen3.5+)
         q = nn::functional::rms_norm(q, fa_q_norm_weight, eps);
@@ -407,12 +386,12 @@ private:
         attn_out = attn_out * gate_sig;
 
         attn_out = ir::reshape(attn_out, {B * S, (size_t)(nH * D)});
-        attn_out = fa_o_proj_weight.forward(attn_out);          // [B*S, H]
+        attn_out = fa_o_proj->forward(attn_out);          // [B*S, H]
         auto h = residual + ir::reshape(attn_out, {B, S, (size_t)H});
 
         // === MLP (sequential residual): h + mlp(post_attention_layernorm(h)) ===
         auto m = ir::reshape(nn::functional::rms_norm(h, fa_norm2_weight, eps), {B * S, (size_t)H});
-        m = fa_down_proj_weight.forward(nn::functional::silu(fa_gate_proj_weight.forward(m)) * fa_up_proj_weight.forward(m));
+        m = fa_ffn->forward(m);
         return h + ir::reshape(m, {B, S, (size_t)H});
     }
 
@@ -462,10 +441,10 @@ private:
         auto nf = ir::reshape(normed, {B * S, H});
 
         // -- projections --
-        auto qkv = la_in_proj_qkv_weight.forward(nf);   // [B*S, qkv_dim]
-        auto a   = la_in_proj_a_weight.forward(nf);     // [B*S, n_v]
-        auto b   = la_in_proj_b_weight.forward(nf);     // [B*S, n_v]
-        auto z   = la_in_proj_z_weight.forward(nf);     // [B*S, val_dim]
+        auto qkv = la_in_proj_qkv->forward(nf);   // [B*S, qkv_dim]
+        auto a   = la_in_proj_a->forward(nf);     // [B*S, n_v]
+        auto b   = la_in_proj_b->forward(nf);     // [B*S, n_v]
+        auto z   = la_in_proj_z->forward(nf);     // [B*S, val_dim]
 
         // -- causal depth-wise conv1d over [q|k|v], then silu --
         // conv weight: [qkv_dim, conv_k, 1].  out[t] = sum_j w[:,j] * in[t-(conv_k-1)+j]
@@ -549,12 +528,12 @@ private:
         auto zg = nn::functional::silu(ir::reshape(z, {B, S, n_v, val_head}));
         o = o * zg;                                                 // * silu(z)  (gate after norm)
         o = ir::reshape(o, {B * S, val_dim});
-        o = la_out_proj_weight.forward(o);                      // [B*S, H]
+        o = la_out_proj->forward(o);                      // [B*S, H]
         auto h = residual + ir::reshape(o, {B, S, H});              // sequential residual
 
         // === MLP (sequential residual): h + mlp(post_attention_layernorm(h)) ===
         auto m = ir::reshape(nn::functional::rms_norm(h, la_norm2_weight, eps), {B * S, H});
-        m = la_down_proj_weight.forward(nn::functional::silu(la_gate_proj_weight.forward(m)) * la_up_proj_weight.forward(m));
+        m = la_ffn->forward(m);
         return h + ir::reshape(m, {B, S, H});
     }
 

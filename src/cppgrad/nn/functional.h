@@ -114,6 +114,14 @@ inline utils::Ref<ir::Tensor> silu(const utils::Ref<ir::Tensor>& x) {
     return ir::mul(x, ir::div(ir::scalar_like(1.0f, x), ir::add(ir::scalar_like(1.0f, x), ir::exp(ir::neg(x)))));
 }
 
+// GELU (fast approximation): 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
+inline utils::Ref<ir::Tensor> gelu(const utils::Ref<ir::Tensor>& x) {
+    // tanh_arg = sqrt(2/pi) * (x + 0.044715 * x^3)
+    auto x3 = x * x * x;
+    auto tanh_arg = ir::scalar_like(0.79788456f, x) * (x + ir::scalar_like(0.044715f, x) * x3);
+    return ir::scalar_like(0.5f, x) * x * (ir::scalar_like(1.0f, x) + ir::tanh(tanh_arg));
+}
+
 // Expand tensor by adding singleton dimensions at the end until it reaches target_rank.
 // e.g., {B, S} with target_rank=4 -> {B, S, 1, 1}
 static utils::Ref<ir::Tensor> expand_dims_to(const utils::Ref<ir::Tensor>& t, size_t target_rank) {
@@ -262,27 +270,6 @@ inline utils::Ref<ir::Tensor> apply_mrope(
     result = ir::scatter_axis(result, rk, k_idx, -1);
 
     return result;
-}
-
-// SwiGLU: silu(x @ gate_proj) * (x @ up_proj), then @ down_proj
-// Weight convention: [input_features, output_features]
-inline utils::Ref<ir::Tensor> swiglu(
-    const utils::Ref<ir::Tensor>& x,
-    const utils::Ref<ir::Tensor>& gate_w,  // [input_features, hidden]
-    const utils::Ref<ir::Tensor>& up_w,     // [input_features, hidden]
-    const utils::Ref<ir::Tensor>& down_w,   // [hidden, output_features]
-    const utils::Ref<ir::Tensor>& gate_b = nullptr,
-    const utils::Ref<ir::Tensor>& up_b = nullptr,
-    const utils::Ref<ir::Tensor>& down_b = nullptr) {
-    auto gate = ir::matmul(x, gate_w);
-    if (gate_b) gate = ir::add(gate, gate_b);
-    auto up = ir::matmul(x, up_w);
-    if (up_b) up = ir::add(up, up_b);
-
-    auto activated = silu(gate) * up;
-    auto out = ir::matmul(activated, down_w);
-    if (down_b) out = ir::add(out, down_b);
-    return out;
 }
 
 // Repeat KV heads for Grouped Query Attention

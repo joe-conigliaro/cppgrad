@@ -2,10 +2,10 @@
 #
 # Targets:
 #   make all                 - build + run tests and examples
-#   make metal               - build metal lib
 #   make tests               - build and run all tests
 #   make examples            - build and run all examples
 #   make examples-except-llm - build and run examples (exclude heavy LLM)
+#   make build-metal         - build metal lib
 #   make build-all           - build everything (no run)
 #   make build-tests         - build test binaries only
 #   make build-examples      - build example binaries only
@@ -115,17 +115,17 @@ else
 endif
 
 .PHONY: all tests examples examples-except-llm \
-        build-all build-tests build-examples build-except-llm \
+        build-metal build-all build-tests build-examples build-except-llm \
         run-tests run-examples run-except-llm \
-        metal clean
+        clean
 
 # ==== Default ====
-all: metal tests examples
+all: build-metal tests examples
 
 # ================================================================
 # Metal - compile .metal → .air → .metallib (once, not per binary)
 # ================================================================
-metal:
+build-metal:
 ifneq ($(HAS_XCRUN),true)
 	@mkdir -p $(METAL_DIR)
 	@test -f $(METAL_SKIP) || { echo "xcrun not found - Metal skipped"; touch $(METAL_SKIP); }
@@ -148,7 +148,7 @@ else
 endif
 
 # Force all object files to wait until Metal shader compilation is complete
-$(LIB_CPP_OBJS) $(LIB_MM_OBJS): metal
+$(LIB_CPP_OBJS) $(LIB_MM_OBJS): build-metal
 
 # ================================================================
 # Static library - compile all library sources once into .a
@@ -189,7 +189,7 @@ build-examples: $(EXAMPLE_BINS)
 
 build-except-llm: $(EXAMPLE_LIGHT_BINS)
 
-build-all: metal build-tests build-examples
+build-all: build-metal build-tests build-examples
 
 # ================================================================
 # Run-only targets
