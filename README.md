@@ -150,6 +150,8 @@ Set at run time (not compile time); zero cost when unset.
 - `QWEN_TIMING=1`: prefill time and decode tokens/sec.
 - `QWEN_KV_CONCAT=1`: use the concat KV-cache reference path instead of the default in-place cache (cross-check).
 
+See [docs/env-flags.md](docs/env-flags.md) for all env flags.
+
 ### Building and Running
 
 All builds use the `Makefile` (incremental, parallel, static library).
