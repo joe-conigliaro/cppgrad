@@ -50,13 +50,21 @@ utils::Ref<Tensor> max(const utils::Ref<const Tensor>& t, const std::vector<int>
 // A[..., M, K] @ B[..., K, N] -> C[..., M, N]
 utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b);
 
+// Fused flash attention (inference only). q [B,S,nH,Dh], k,v [B,KV,nKV,Dh] -> out [B,S,nH,Dh].
+// softmax(scale * QKᵀ + causal)V, online-softmax streaming over keys (no [S,KV] materialization).
+// n_rep = nH/nKV (grouped-query); causal masks query row s to keys [0, q_offset+s].
+utils::Ref<Tensor> flash_attention(const utils::Ref<const Tensor>& q, const utils::Ref<const Tensor>& k,
+                                   const utils::Ref<const Tensor>& v, float scale, int n_rep,
+                                   bool causal, size_t q_offset);
+
 // Quantized matmul (inference): out[M,N] = a[M,K] @ dequant(qweight)^T, weights kept packed and
 // dequantized in-kernel. `params` selects the scheme (MLX affine 8-bit by default). For MLX affine:
 // qweight [N, K/pack_factor] u32, scales/biases [N, K/group_size] fp32.
+// `aux` holds the scheme's metadata tensors in scheme-defined order (MLX_AFFINE: {scales, biases}).
+// Op inputs become [a, qweight, aux...].
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
                                     const utils::Ref<const Tensor>& qweight,
-                                    const utils::Ref<const Tensor>& scales,
-                                    const utils::Ref<const Tensor>& biases,
+                                    const std::vector<utils::Ref<const Tensor>>& aux,
                                     const ir::QuantParams& params = {});
 
 // Gather Op: table[V, D, ...] + indices[...] -> output[indices->shape(), D, ...]

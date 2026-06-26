@@ -2,13 +2,15 @@
 #
 # Targets:
 #   make all                 - build + run tests and examples
-#   make tests               - build and run all tests
+#   make tests               - build and run the unit tests (what CI runs)
+#   make tests-integration   - build and run heavy / checkpoint-gated tests (tests/integration/)
+#   make tests-all           - tests + tests-integration
 #   make examples            - build and run all examples
-#   make examples-except-llm - build and run examples (exclude heavy LLM)
 #   make build-metal         - build metal lib
 #   make build-all           - build everything (no run)
 #   make build-tests         - build test binaries only
 #   make build-examples      - build example binaries only
+#   make build-cmds          - build cmd binaries only
 #   make run-tests           - run already-built tests
 #   make run-examples        - run already-built examples
 #   make clean               - remove build/
@@ -50,7 +52,7 @@ endif
 INCLUDE_FLAGS := -Isrc -I.
 OBJCXX_FLAGS  := -fobjc-arc
 
-# Homebrew headers/libs (macOS)
+# ==== Homebrew headers/libs (macOS) ====
 ifeq ($(ON_APPLE),true)
 	FRAMEWORKS    := -framework Metal -framework Foundation -framework MetalPerformanceShaders
 	INCLUDE_FLAGS += -I/opt/homebrew/include
@@ -69,9 +71,12 @@ ifeq ($(ON_APPLE)$(HAS_XCRUN),truetrue)
 	LIB_METAL      := $(shell find src/cppgrad/backend/metal -name '*.metal' 2>/dev/null || true)
 endif
 
-TEST_SRCS          := $(wildcard tests/*.cpp)
-EXAMPLE_SRCS       := $(wildcard examples/*.cpp) $(shell find examples -mindepth 2 -name '*.cpp' 2>/dev/null || true)
-EXAMPLE_LIGHT_SRCS := $(filter-out examples/llm/qwen3_inference.cpp,$(EXAMPLE_SRCS))
+# ==== Source paths ====
+TEST_SRCS      := $(shell find tests -name '*.cpp' 2>/dev/null || true)
+TEST_INT_SRCS  := $(filter tests/integration/%,$(TEST_SRCS))
+TEST_UNIT_SRCS := $(filter-out tests/integration/%,$(TEST_SRCS))
+EXAMPLE_SRCS   := $(wildcard examples/*.cpp) $(shell find examples -mindepth 2 -name '*.cpp' 2>/dev/null || true)
+CMD_SRCS       := $(wildcard cmd/*.cpp) $(shell find cmd -mindepth 2 -name '*.cpp' 2>/dev/null || true)
 
 # ==== Output paths ====
 BUILD_DIR := build
@@ -98,10 +103,11 @@ METAL_SKIP  := $(METAL_DIR)/.skip
 LIB_CPP_OBJS := $(addprefix $(BUILD_DIR)/,$(LIB_CPP_SOURCES:.cpp=.cpp.o))
 LIB_MM_OBJS  := $(addprefix $(BUILD_DIR)/,$(LIB_MM_SOURCES:.mm=.mm.o))
 
-# Binary paths
-TEST_BINS          := $(patsubst %,$(BUILD_DIR)/%,$(TEST_SRCS:.cpp=))
-EXAMPLE_BINS       := $(patsubst %,$(BUILD_DIR)/%,$(EXAMPLE_SRCS:.cpp=))
-EXAMPLE_LIGHT_BINS := $(patsubst %,$(BUILD_DIR)/%,$(EXAMPLE_LIGHT_SRCS:.cpp=))
+# ==== Binary paths ====
+TEST_BINS     := $(patsubst %,$(BUILD_DIR)/%,$(TEST_UNIT_SRCS:.cpp=))
+TEST_INT_BINS := $(patsubst %,$(BUILD_DIR)/%,$(TEST_INT_SRCS:.cpp=))
+EXAMPLE_BINS  := $(patsubst %,$(BUILD_DIR)/%,$(EXAMPLE_SRCS:.cpp=))
+CMD_BINS      := $(patsubst %,$(BUILD_DIR)/%,$(CMD_SRCS:.cpp=))
 
 # ==== Linking flags per platform ====
 LINK_PLATFORM_FLAGS := $(FRAMEWORKS)
@@ -111,9 +117,9 @@ else
 	COPY_METALLIB =
 endif
 
-.PHONY: all tests examples examples-except-llm \
-        build-metal build-all build-tests build-examples build-except-llm \
-        run-tests run-examples run-except-llm \
+.PHONY: all tests tests-integration tests-all examples \
+        build-metal build-all build-tests build-tests-integration build-examples build-cmds \
+        run-tests run-tests-integration run-examples \
         clean
 
 # ==== Default ====
@@ -158,35 +164,46 @@ $(LIB_ARCHIVE): $(LIB_CPP_OBJS) $(LIB_MM_OBJS)
 # ================================================================
 $(BUILD_DIR)/%.cpp.o: %.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_FLAGS) $(INCLUDE_FLAGS) -c $< -o $@
+	$(CXX) $(CXX_FLAGS) $(INCLUDE_FLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD_DIR)/%.mm.o: %.mm
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_FLAGS) $(INCLUDE_FLAGS) $(OBJCXX_FLAGS) -c $< -o $@
+	$(CXX) $(CXX_FLAGS) $(INCLUDE_FLAGS) $(OBJCXX_FLAGS) -MMD -MP -c $< -o $@
+
+# Header-dependency tracking: -MMD writes a .d file of header deps next to each .o, so editing a
+# header recompiles every .cpp/.mm that includes it (prevents silent stale builds).
+-include $(LIB_CPP_OBJS:.o=.d) $(LIB_MM_OBJS:.o=.d)
+-include $(addprefix $(BUILD_DIR)/,$(TEST_SRCS:.cpp=.cpp.d) $(EXAMPLE_SRCS:.cpp=.cpp.d) $(CMD_SRCS:.cpp=.cpp.d))
 
 # ================================================================
 # Linking - one pattern rule handles both top-level and subdirs
 # ================================================================
-$(BUILD_DIR)/tests/%: $(BUILD_DIR)/tests/%.cpp.o $(LIB_ARCHIVE)
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_FLAGS) $< $(FORCE_LOAD) $(LINK_PLATFORM_FLAGS) $(LIBRARY_FLAGS) -o $@
-	$(COPY_METALLIB)
-
-$(BUILD_DIR)/examples/%: $(BUILD_DIR)/examples/%.cpp.o $(LIB_ARCHIVE)
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXX_FLAGS) $< $(FORCE_LOAD) $(LINK_PLATFORM_FLAGS) $(LIBRARY_FLAGS) -o $@
-	$(COPY_METALLIB)
+define LINK_RULE
+    $(BUILD_DIR)/$(1)/%: $(BUILD_DIR)/$(1)/%.cpp.o $(LIB_ARCHIVE)
+	    @mkdir -p $$(dir $$@)
+	    $$(CXX) $$(CXX_FLAGS) $$< $$(FORCE_LOAD) $$(LINK_PLATFORM_FLAGS) $$(LIBRARY_FLAGS) -o $$@
+	    $$(COPY_METALLIB)
+endef
+$(eval $(call LINK_RULE,tests))
+$(eval $(call LINK_RULE,examples))
+$(eval $(call LINK_RULE,cmd))
 
 # ================================================================
 # Build-only targets
 # ================================================================
 build-tests: $(TEST_BINS)
 
+# Heavy / checkpoint-gated tests (large-model repros, speculative/MTP that need QWEN_MODEL_DIR)
+# excluded from the default `tests` target (and CI) which runs the unit set;
+build-tests-integration: $(TEST_INT_BINS)
+
 build-examples: $(EXAMPLE_BINS)
 
-build-except-llm: $(EXAMPLE_LIGHT_BINS)
+# Standalone deliverable executables (e.g. the chat server). Unlike examples these ar build-only
+# never auto-run (they block / need a model / take arguments). Each .cpp is a binary.
+build-cmds: $(CMD_BINS)
 
-build-all: build-metal build-tests build-examples
+build-all: build-metal build-tests build-tests-integration build-examples build-cmds
 
 # ================================================================
 # Run-only targets
@@ -200,17 +217,17 @@ run-tests:
 		"$$bin"; \
 	done
 
-run-examples:
-	@for bin in $(EXAMPLE_BINS); do \
+run-tests-integration:
+	@for bin in $(TEST_INT_BINS); do \
 		echo ""; \
 		echo "======================================"; \
-		echo "Running example: $$bin"; \
+		echo "Running integration test: $$bin"; \
 		echo "======================================"; \
 		"$$bin"; \
 	done
 
-run-except-llm:
-	@for bin in $(EXAMPLE_LIGHT_BINS); do \
+run-examples:
+	@for bin in $(EXAMPLE_BINS); do \
 		echo ""; \
 		echo "======================================"; \
 		echo "Running example: $$bin"; \
@@ -225,11 +242,13 @@ run-except-llm:
 tests: build-tests
 	+$(MAKE) run-tests
 
+tests-integration: build-tests-integration
+	+$(MAKE) run-tests-integration
+
+tests-all: tests tests-integration
+
 examples: build-examples
 	+$(MAKE) run-examples
-
-examples-except-llm: build-except-llm
-	+$(MAKE) run-except-llm
 
 # ================================================================
 # Clean

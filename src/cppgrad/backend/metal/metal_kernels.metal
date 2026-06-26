@@ -524,6 +524,52 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
     }
 }
 
+// Flash attention (online softmax, no [S,KV] materialization). One threadgroup (one 32-lane
+// simdgroup) per (b, s, h) output row; the lanes split the head_dim, cooperatively reduce the q·k dot
+// per key (simd_sum), and each maintains the running max / sum / weighted-value accumulator for its
+// slice of Dh. Causal by position: query row s attends keys [0, q_offset+s]. Query head h reads kv
+// head h/n_rep. acc[] holds ceil(Dh/32) elements per lane (Dh up to 32*FA_ACC_MAX).
+#define FA_ACC_MAX 16
+struct FlashParams { uint B, S, nH, Dh, KV, nKV, n_rep, causal, q_offset; float scale; };
+kernel void flash_attention_f32(device const float* Q [[buffer(0)]],   // [B,S,nH,Dh]
+                                device const float* K [[buffer(1)]],   // [B,KV,nKV,Dh]
+                                device const float* V [[buffer(2)]],   // [B,KV,nKV,Dh]
+                                device float*       O [[buffer(3)]],   // [B,S,nH,Dh]
+                                constant FlashParams& P [[buffer(4)]],
+                                uint3 tg  [[threadgroup_position_in_grid]],   // (h, s, b)
+                                uint3 lt  [[thread_position_in_threadgroup]],
+                                uint3 ntg [[threads_per_threadgroup]]) {
+    uint h = tg.x, s = tg.y, b = tg.z;
+    if (h >= P.nH || s >= P.S || b >= P.B) return;
+    uint lane = lt.x, T = ntg.x, Dh = P.Dh;
+    uint kv = h / P.n_rep;
+    device const float* qp = Q + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
+    uint jmax = P.causal ? min(P.KV, P.q_offset + s + 1) : P.KV;
+
+    float m = -INFINITY, l = 0.0f;
+    float acc[FA_ACC_MAX];
+    for (uint c = 0; c < FA_ACC_MAX; ++c) acc[c] = 0.0f;
+
+    for (uint j = 0; j < jmax; ++j) {
+        device const float* kp = K + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        float part = 0.0f;
+        for (uint d = lane; d < Dh; d += T) part += qp[d] * kp[d];
+        float sij = simd_sum(part) * P.scale;            // q·k reduced across the simdgroup
+        float m_new = max(m, sij);
+        float corr = exp(m - m_new);                     // m=-inf first iter -> corr=0
+        float p    = exp(sij - m_new);
+        l = l * corr + p;
+        device const float* vp = V + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        uint c = 0;
+        for (uint d = lane; d < Dh; d += T) { acc[c] = acc[c] * corr + p * vp[d]; ++c; }
+        m = m_new;
+    }
+    float inv = l > 0.0f ? 1.0f / l : 0.0f;
+    device float* op = O + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
+    uint c = 0;
+    for (uint d = lane; d < Dh; d += T) { op[d] = acc[c] * inv; ++c; }
+}
+
 // Broadcast
 
 kernel void broadcast_view_f32(device const float* in_buf [[buffer(0)]],

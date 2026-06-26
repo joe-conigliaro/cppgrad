@@ -43,21 +43,48 @@ struct CacheUpdateOp { int axis; size_t start; };
 
 struct MatMulOp {};
 
+// Fused flash attention (inference only, no backward). Computes softmax(scale * Q Kᵀ + causal_mask) V
+// WITHOUT materializing the [S, KV] score matrix -- online-softmax streaming over keys, O(1) extra
+// memory. Grouped-query: query head h reads kv head h/n_rep (n_rep = nH/nKV). Causal masking is by
+// position (no mask tensor): query row s (absolute position q_offset+s) attends keys [0, q_offset+s].
+// Inputs in native layout (no permute/copy): q [B,S,nH,Dh], k,v [B,KV,nKV,Dh]; output [B,S,nH,Dh].
+struct FlashAttentionOp { float scale; int n_rep; bool causal; size_t q_offset; };
+
 // Quantization scheme descriptor (an op parameter, like RandomParams). The backend dispatches on
-// `scheme` internally, so a new scheme (GPTQ, AWQ, ...) is a kernel branch -- not a virtual per type.
+// `scheme` internally, so a new scheme (GPTQ, AWQ, k-quants, ...) is a kernel branch -- not a virtual
+// per type. Each scheme also defines how many auxiliary metadata buffers it carries and what they
+// mean (see aux_buffer_count and the QuantizedMatMulOp doc below); that decouples the op/backend ABI
+// from any one scheme's metadata layout.
 enum class QuantScheme {
-    MLX_AFFINE_U8,   // MLX 8-bit affine: w = scale*q + bias, unsigned codes, per-group scale/bias
-};
-struct QuantParams {
-    QuantScheme scheme = QuantScheme::MLX_AFFINE_U8;
-    int bits        = 8;    // bits per quantized code
-    int group_size  = 64;   // codes sharing one (scale, bias), along the K (input) dim
-    int pack_factor = 4;    // codes packed per storage word (e.g. 4 u8 per uint32)
+    // MLX affine family: w = scale*q + bias, unsigned codes, per-group scale+bias. aux = {scales,
+    // biases}. The code WIDTH is a parameter (QuantParams::bits / pack_factor), NOT part of the
+    // scheme -- the dequant math and metadata layout are identical for 4/6/8-bit; only the unpacking
+    // (codes per storage word) differs. The backend kernel branches on bits/pack_factor.
+    MLX_AFFINE,
 };
 
-// Quantized matmul (inference only, no backward): out = A @ dequant(W)^T. The `params` carry the
-// quant scheme (+ bits/group_size/packing); the backend dispatches on scheme. Inputs: activation
-// [M,K] fp32, packed qweight, and scheme-specific extra buffers (e.g. scales/biases for MLX affine).
+// Number of scheme-specific auxiliary metadata buffers a scheme supplies to quantized_matmul,
+// in addition to the activation and packed qweight. Used to validate op inputs. (Width-independent.)
+inline int aux_buffer_count(QuantScheme scheme) {
+    switch (scheme) {
+        case QuantScheme::MLX_AFFINE: return 2;  // scales, biases
+    }
+    return 0;
+}
+
+struct QuantParams {
+    QuantScheme scheme = QuantScheme::MLX_AFFINE;
+    int bits        = 8;    // bits per quantized code (8 supported; 4 is TODO -- see backends)
+    int group_size  = 64;   // codes sharing one (scale, bias), along the K (input) dim
+    int pack_factor = 4;    // codes packed per storage word (32/bits; e.g. 4 u8 or 8 u4 per uint32)
+};
+
+// Quantized matmul (inference only, no backward): out = A @ dequant(W)^T. `params` carries the
+// quant scheme (+ bits/group_size/packing); the backend dispatches on scheme. Op inputs are
+// [activation [M,K], packed qweight, aux...], where the trailing aux buffers are scheme-defined
+// (MLX_AFFINE: scales then biases). The backend receives the aux buffers as an ordered list, so
+// schemes with a different count/typing of metadata (k-quants' multi-level scales, AWQ qzeros,
+// symmetric int with no bias) fit without changing the interface.
 struct QuantizedMatMulOp { QuantParams params; };
 
 enum class RandomOpType { UNIFORM, NORMAL };
@@ -96,6 +123,7 @@ using Op = std::variant<
     AssignOp,
     CacheUpdateOp,
     MatMulOp,
+    FlashAttentionOp,
     QuantizedMatMulOp,
     RandomOp,
     UnaryOp,
@@ -118,6 +146,7 @@ inline const char* to_string(const ConcatOp& op)      { return "ConcatOp"; }
 inline const char* to_string(const AssignOp& op)      { return "AssignOp"; }
 inline const char* to_string(const CacheUpdateOp& op) { return "CacheUpdateOp"; }
 inline const char* to_string(const MatMulOp& op)      { return "MatMulOp"; }
+inline const char* to_string(const FlashAttentionOp& op) { return "FlashAttentionOp"; }
 inline const char* to_string(const QuantizedMatMulOp& op) { return "QuantizedMatMulOp"; }
 inline const char* to_string(const RandomOp& op) {
     switch (op.type) {
@@ -197,6 +226,7 @@ inline constexpr bool is_differentiable_v =
     !std::is_same_v<std::decay_t<T>, GatherOp> &&
     !std::is_same_v<std::decay_t<T>, GatherAxisOp> &&
     !std::is_same_v<std::decay_t<T>, QuantizedMatMulOp> &&
+    !std::is_same_v<std::decay_t<T>, FlashAttentionOp> &&
     !std::is_same_v<std::decay_t<T>, ScatterOp>;
 // ConcatOp is differentiable (backward: split grad along axis).
 // Runtime.

@@ -19,8 +19,11 @@ public:
     void binary_op(ir::BinaryOpType op_type, const Buffer& a, const backend::View& va, const Buffer& b, const backend::View& vb, Buffer& out, const backend::View& vo) const override;
     void reduce_op(ir::ReduceOpType op_type, const Buffer& a, const backend::View& va, Buffer& out, const backend::View& vo, const std::vector<int>& axes, bool keep_dims) const override;
     void matmul(const Buffer& a, const backend::View& va, const Buffer& b, const backend::View& vb, Buffer& out, const backend::View& vo) const override;
-    void quantized_matmul(const Buffer& a, const Buffer& qweight, const Buffer& scales, const Buffer& biases,
+    void quantized_matmul(const Buffer& a, const Buffer& qweight, const std::vector<const Buffer*>& aux,
                           Buffer& out, size_t M, size_t N, size_t K, const ir::QuantParams& params) const override;
+    void flash_attention(const Buffer& q, const Buffer& k, const Buffer& v, Buffer& out,
+                         size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
+                         float scale, int n_rep, bool causal, size_t q_offset) const override;
     void gather_op(const Buffer& table, const Buffer& indices, Buffer& out, size_t V, size_t D) const override;
     void concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
                    Buffer& out, const backend::View& out_view, int axis) const override;

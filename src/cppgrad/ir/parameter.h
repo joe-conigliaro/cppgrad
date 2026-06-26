@@ -60,6 +60,40 @@ inline utils::Ref<Tensor> parameterize(const utils::Ref<Tensor>& t) {
     return param;
 }
 
+// Commit a (possibly in-place / effectful) graph node to a detached leaf.
+//
+// Realizes `t` and returns a fresh canonical leaf wrapping the realized buffer, dropping the
+// producing graph. Unlike parameterize(), this is the decode-runtime commit primitive (see
+// docs/decode-runtime.md): it is correct in the presence of committed in-place effects because it
+// relies on the executor's "realized = immutable boundary" memoization -- a node that already holds
+// its buffer is never recomputed, so committed in-place writes (cache_update / assign) are never
+// re-applied or re-ordered. Use it to detach the linear-attention recurrent/conv state (and any
+// per-chunk hidden) between prefill chunks / decode steps so the upstream graph -- and its buffers --
+// can be freed, bounding memory on long prefills.
+//
+// If `t` is a non-canonical view (offset / strided), its prefix is materialized into a dense buffer
+// so the returned leaf is canonical (contiguous, offset 0). requires_grad is false: commit is an
+// inference-only detach (it severs autograd history by construction).
+inline utils::Ref<Tensor> commit(const utils::Ref<Tensor>& t) {
+    if (!t) throw std::runtime_error("commit: null tensor");
+
+    std::shared_ptr<cppgrad::backend::Buffer> buf;
+    const auto& acc = t->access_meta();
+    const bool canonical = acc.contiguous && acc.offset == 0;
+    if (canonical) {
+        buf = t->eval();   // realizes; realized nodes are memoized (committed writes never re-run)
+    } else {
+        // View: copy the prefix into its own dense buffer so the leaf doesn't alias a mutating cache.
+        buf = t->materialize_buffer();
+    }
+    if (!buf) throw std::runtime_error("commit: realization failed (null buffer)");
+
+    auto leaf = Tensor::make_leaf(buf, t->shape(), t->device_type(), t->dtype());
+    leaf->set_requires_grad(false);
+    if (!leaf->is_canonical_leaf()) throw std::runtime_error("commit: non-canonical leaf");
+    return leaf;
+}
+
 // Convenience alias
 inline utils::Ref<ir::Tensor> trainable_from(const utils::Ref<ir::Tensor>& init) {
     return ir::parameterize(init);

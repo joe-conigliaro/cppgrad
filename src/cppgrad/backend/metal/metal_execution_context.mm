@@ -2,6 +2,8 @@
 // https://github.com/joe-conigliaro
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
+#include <cstdlib>
+#include <algorithm>
 #include "cppgrad/backend/metal/metal_execution_context.h"
 #include "cppgrad/utils/profiler.h"
 
@@ -23,6 +25,11 @@ MetalExecutionContext::~MetalExecutionContext() {
 }
 
 void MetalExecutionContext::submit_compute(ComputeWork work) {
+    // Work is batched and flushed at scope boundaries / explicit flush_pending (see flush()). A long
+    // computation that would otherwise pin too many resident buffers in one command buffer is bounded
+    // by the caller flushing at safe boundaries (e.g. prefill commits + flushes per chunk) -- NOT by
+    // auto-flushing here, which would commit mid-scope and break the "buffers live until the scope
+    // flush" invariant.
     _computeWork.push_back(std::move(work));
 }
 

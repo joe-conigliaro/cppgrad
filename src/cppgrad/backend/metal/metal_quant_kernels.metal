@@ -2,47 +2,15 @@
 // https://github.com/joe-conigliaro
 //
 // Metal quantized-matmul kernels (dequantize-in-kernel). Compiled into the same default.metallib
-// as metal_kernels.metal; kept separate as quant is a distinct, growing concern (more schemes /
-// a tiled GEMM to come). Backend dispatch picks the kernel by name per QuantScheme.
+// as metal_kernels.metal; kept separate as quant is a distinct, growing concern (more schemes).
+// Backend dispatch (submit_matmul_quant) picks GEMV for decode (M==1) or the tiled GEMM for M>1.
 #include <metal_stdlib>
 using namespace metal;
 
 // MLX affine 8-bit quantized matmul: out[M,N] = A[M,K] @ dequant(W)^T.
-// A [M,K] fp32; QW [N,K/4] u32 (4 unsigned 8-bit codes/word); S,B [N,K/GS] fp32. One thread per out.
-kernel void matmul_quant_f32(device const float*    A  [[buffer(0)]],
-                             device const uint32_t* QW [[buffer(1)]],
-                             device const float*    S  [[buffer(2)]],
-                             device const float*    B  [[buffer(3)]],
-                             device float*          OUT[[buffer(4)]],
-                             constant uint32_t& M  [[buffer(5)]],
-                             constant uint32_t& N  [[buffer(6)]],
-                             constant uint32_t& K  [[buffer(7)]],
-                             constant uint32_t& GS [[buffer(8)]],
-                             uint gid [[thread_position_in_grid]]) {
-    if (gid >= M * N) return;
-    uint m = gid / N, n = gid % N;
-    uint G = K / GS, Kp = K / 4;
-    device const uint32_t* wrow = QW + (ulong)n * Kp;
-    device const float*    srow = S  + (ulong)n * G;
-    device const float*    brow = B  + (ulong)n * G;
-    device const float*    arow = A  + (ulong)m * K;
-    float acc = 0.0f;
-    for (uint g = 0; g < G; ++g) {
-        float s = srow[g], b = brow[g];
-        uint k0 = g * GS;
-        float ga = 0.0f, gq = 0.0f;
-        for (uint j = 0; j < GS; ++j) {
-            uint k = k0 + j;
-            uint word = wrow[k >> 2];
-            uint q = (word >> (8 * (k & 3))) & 0xFFu;
-            float a = arow[k];
-            gq += a * (float)q;
-            ga += a;
-        }
-        acc += s * gq + b * ga;
-    }
-    OUT[gid] = acc;
-}
+//   A [M,K] fp32; QW [N,K/4] u32 (4 unsigned 8-bit codes/word); S,B [N,K/GS] fp32.
+// Two kernels: a GEMV for decode (M==1) and a tiled GEMM for prefill (M>1). Backend dispatch
+// (submit_matmul_quant) picks by M.
 
 // One packed word -> 4 codes contributing to a GEMV dot product:
 //   sum_i a_i*(s*q_i + b) = s*dot(a,q) + b*sum(a),  with all 4 codes in one quant group g=w/wpg.
@@ -61,6 +29,87 @@ inline float quant_gemv_word(uint w,
                       float((word >> 16) & 0xFFu),
                       float((word >> 24) & 0xFFu));
     return s * dot(a, q) + b * (a.x + a.y + a.z + a.w);
+}
+
+// Register-blocked, threadgroup-memory-tiled quantized GEMM (prefill, M > 1).
+// OUT[M,N] = A[M,K] @ dequant(W)^T,  W[N,K] = S*q + B  (MLX affine u8).
+// Each threadgroup computes a QT_BM x QT_BN output tile with (QT_BM/QT_RM)x(QT_BN/QT_RN)=16x16=256
+// threads, each accumulating a QT_RM x QT_RN register micro-tile over the K dimension in QT_BK steps.
+// The weight tile is DEQUANTIZED ONCE into threadgroup memory per K-step and reused across all QT_BM
+// rows of the tile -> full batch reuse + high occupancy. (Replaced an earlier naive one-thread-per-
+// output kernel and a simdgroup-per-row-block kernel, both ~bandwidth/occupancy bound.)
+#define QT_BM 64
+#define QT_BN 64
+#define QT_BK 16
+#define QT_RM 4
+#define QT_RN 4
+kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
+                                        device const uint32_t* QW [[buffer(1)]],
+                                        device const float*    S  [[buffer(2)]],
+                                        device const float*    Bb [[buffer(3)]],
+                                        device float*          OUT[[buffer(4)]],
+                                        constant uint32_t& M  [[buffer(5)]],
+                                        constant uint32_t& N  [[buffer(6)]],
+                                        constant uint32_t& K  [[buffer(7)]],
+                                        constant uint32_t& GS [[buffer(8)]],
+                                        uint3 tid [[thread_position_in_threadgroup]],
+                                        uint3 bid [[threadgroup_position_in_grid]]) {
+    threadgroup float As[QT_BM][QT_BK];
+    threadgroup float Ws[QT_BK][QT_BN];
+
+    const uint row0 = bid.y * QT_BM;
+    const uint col0 = bid.x * QT_BN;
+    const uint Kp = K / 4;
+    const uint G  = K / GS;
+    const uint NT = (QT_BM / QT_RM) * (QT_BN / QT_RN);   // 256 threads
+    const uint lt = tid.y * (QT_BN / QT_RN) + tid.x;      // linear thread id 0..255
+
+    float acc[QT_RM][QT_RN];
+    for (uint i = 0; i < QT_RM; ++i) for (uint j = 0; j < QT_RN; ++j) acc[i][j] = 0.0f;
+
+    const uint ktiles = (K + QT_BK - 1) / QT_BK;
+    for (uint t = 0; t < ktiles; ++t) {
+        const uint kbase = t * QT_BK;
+        // Load A tile [QT_BM][QT_BK] (zero-padded past M/K).
+        for (uint idx = lt; idx < QT_BM * QT_BK; idx += NT) {
+            uint i = idx / QT_BK, j = idx % QT_BK;
+            uint m = row0 + i, k = kbase + j;
+            As[i][j] = (m < M && k < K) ? A[(ulong)m * K + k] : 0.0f;
+        }
+        // Load + dequantize weight tile Ws[QT_BK][QT_BN]: Ws[j][n] = dequant(col0+n, kbase+j).
+        for (uint idx = lt; idx < QT_BK * QT_BN; idx += NT) {
+            uint j = idx / QT_BN, n = idx % QT_BN;
+            uint col = col0 + n, k = kbase + j;
+            float val = 0.0f;
+            if (col < N && k < K) {
+                uint word = QW[(ulong)col * Kp + (k >> 2)];
+                uint code = (word >> (8 * (k & 3))) & 0xFFu;
+                uint g = k / GS;
+                val = S[(ulong)col * G + g] * (float)code + Bb[(ulong)col * G + g];
+            }
+            Ws[j][n] = val;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint k = 0; k < QT_BK; ++k) {
+            float a[QT_RM], w[QT_RN];
+            for (uint i = 0; i < QT_RM; ++i) a[i] = As[tid.y * QT_RM + i][k];
+            for (uint j = 0; j < QT_RN; ++j) w[j] = Ws[k][tid.x * QT_RN + j];
+            for (uint i = 0; i < QT_RM; ++i)
+                for (uint j = 0; j < QT_RN; ++j)
+                    acc[i][j] += a[i] * w[j];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (uint i = 0; i < QT_RM; ++i) {
+        uint m = row0 + tid.y * QT_RM + i;
+        if (m >= M) continue;
+        for (uint j = 0; j < QT_RN; ++j) {
+            uint n = col0 + tid.x * QT_RN + j;
+            if (n < N) OUT[(ulong)m * N + n] = acc[i][j];
+        }
+    }
 }
 
 // Decode GEMV (M == 1): one simdgroup (32 lanes) per output column n, cooperative reduction over K.

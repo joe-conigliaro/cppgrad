@@ -1,4 +1,4 @@
-# cppgrad
+# CppGrad
 A small C++17 autograd + neural-network library.
 
 ![CI - main branch](https://github.com/joe-conigliaro/cppgrad/actions/workflows/ci.yml/badge.svg?branch=main)
@@ -32,6 +32,8 @@ committed (and waited on) **once** at:
   end just like the synchronous CPU backend.
 - **host readback** - the allocator's device->host / device->device / host->device copies flush pending
   compute first, so a read never races ahead of the kernels that produce its data.
+
+---
 
 ## LLM inference (Qwen3.5 / 3.6)
 Runs Qwen3.5/3.6 - including the 27B - from MLX `.safetensors` checkpoints via

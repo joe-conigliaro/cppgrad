@@ -131,17 +131,18 @@ utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<co
 
     // Matrix dims
     size_t M = a->shape()[ra - 2];
+    size_t Ka = a->shape()[ra - 1];
     size_t N = b->shape()[rb - 1];
 
-    // Broadcast batch dims
-    std::vector<size_t> bc_batch = batch_a.size() >= batch_b.size() ? batch_a : batch_b;
-    size_t nb = bc_batch.size();
+    // Broadcast batch dims RIGHT-ALIGNED (NumPy/torch rule): a missing or size-1 dim broadcasts.
+    size_t nb = std::max(batch_a.size(), batch_b.size());
+    std::vector<size_t> bc_batch(nb);
+    const size_t pa = nb - batch_a.size(), pb = nb - batch_b.size();
     for (size_t i = 0; i < nb; ++i) {
-        size_t ia = i < batch_a.size() ? batch_a[i] : 1;
-        size_t ib = i < batch_b.size() ? batch_b[i] : 1;
-        if (ia != 1 && ib != 1 && ia != ib) {
+        size_t ia = i < pa ? 1 : batch_a[i - pa];
+        size_t ib = i < pb ? 1 : batch_b[i - pb];
+        if (ia != 1 && ib != 1 && ia != ib)
             throw std::runtime_error("matmul: batch dims incompatible");
-        }
         bc_batch[i] = std::max(ia, ib);
     }
 
@@ -150,13 +151,48 @@ utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<co
     out_shape.push_back(M);
     out_shape.push_back(N);
 
-    return Tensor::make(MatMulOp{}, {a, b}, out_shape, a->device_type(), a->dtype());
+    // Broadcast each operand's batch dims up to bc_batch (stride-0 views for size-1 / missing dims),
+    // so the backend -- which indexes each operand by the OUTPUT batch index using that operand's own
+    // strides -- reads the right slice. The builder used to compute the broadcast output shape but
+    // pass the operands unmodified, so any actually-broadcast batch dim was indexed with a nonzero
+    // stride -> silent wrong results. Identity (no copy) when an operand's batch already equals bc_batch.
+    auto align = [&](const utils::Ref<const Tensor>& t, size_t inner0, size_t inner1) {
+        std::vector<size_t> target = bc_batch;
+        target.push_back(inner0);
+        target.push_back(inner1);
+        if (t->shape() == target) return t;
+        utils::Ref<const Tensor> u = t;
+        if (t->shape().size() < target.size()) {            // left-pad rank with size-1 dims
+            std::vector<size_t> padded(target.size() - t->shape().size(), 1);
+            padded.insert(padded.end(), t->shape().begin(), t->shape().end());
+            u = ir::reshape(u, padded);
+        }
+        return utils::Ref<const Tensor>(ir::broadcast(u, target));
+    };
+    auto a_bc = align(a, M, Ka);
+    auto b_bc = align(b, Ka, N);
+
+    return Tensor::make(MatMulOp{}, {a_bc, b_bc}, out_shape, a->device_type(), a->dtype());
+}
+
+utils::Ref<Tensor> flash_attention(const utils::Ref<const Tensor>& q, const utils::Ref<const Tensor>& k,
+                                   const utils::Ref<const Tensor>& v, float scale, int n_rep,
+                                   bool causal, size_t q_offset) {
+    if (q->shape().size() != 4 || k->shape().size() != 4 || v->shape().size() != 4)
+        throw std::runtime_error("flash_attention: q,k,v must be 4-D [B,S,nH,Dh] / [B,KV,nKV,Dh]");
+    const auto& qs = q->shape();   // [B, S, nH, Dh]
+    const auto& ks = k->shape();   // [B, KV, nKV, Dh]
+    if (qs[3] != ks[3]) throw std::runtime_error("flash_attention: head_dim mismatch");
+    if (k->shape() != v->shape()) throw std::runtime_error("flash_attention: k/v shape mismatch");
+    if ((int)qs[2] != n_rep * (int)ks[2]) throw std::runtime_error("flash_attention: nH != n_rep*nKV");
+    // Output matches q [B,S,nH,Dh].
+    return Tensor::make(FlashAttentionOp{scale, n_rep, causal, q_offset}, {q, k, v},
+                        std::vector<size_t>(qs.begin(), qs.end()), q->device_type(), q->dtype());
 }
 
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
                                     const utils::Ref<const Tensor>& qweight,
-                                    const utils::Ref<const Tensor>& scales,
-                                    const utils::Ref<const Tensor>& biases,
+                                    const std::vector<utils::Ref<const Tensor>>& aux,
                                     const ir::QuantParams& params) {
     if (a->shape().size() != 2)
         throw std::runtime_error("quantized_matmul: activation must be 2D [M,K]");
@@ -165,8 +201,12 @@ utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
     if (qweight->shape().size() != 2 ||
         qweight->shape()[1] * static_cast<size_t>(params.pack_factor) != K)
         throw std::runtime_error("quantized_matmul: qweight must be [N, K/pack_factor] matching K");
+    if ((int)aux.size() != ir::aux_buffer_count(params.scheme))
+        throw std::runtime_error("quantized_matmul: wrong number of aux tensors for scheme");
+    std::vector<utils::Ref<const Tensor>> inputs = {a, qweight};
+    inputs.insert(inputs.end(), aux.begin(), aux.end());
     std::vector<size_t> out_shape = {a->shape()[0], N};
-    return Tensor::make(QuantizedMatMulOp{params}, {a, qweight, scales, biases},
+    return Tensor::make(QuantizedMatMulOp{params}, inputs,
                         out_shape, a->device_type(), a->dtype());
 }
 

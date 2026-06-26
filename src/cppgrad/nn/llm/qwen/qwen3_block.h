@@ -373,13 +373,23 @@ private:
         _last_k = k_full;   // for concat-mode caching (forward_full_cached_concat)
         _last_v = v_full;
 
-        auto k_rep = k_full, v_rep = v_full;
-        if (n_rep > 1) {
-            k_rep = nn::functional::repeat_kv(k_full, (size_t)n_rep);
-            v_rep = nn::functional::repeat_kv(v_full, (size_t)n_rep);
+        // Attention over the (grouped-query) cache. Two equivalent paths:
+        //  - gqa_attention (default): broadcasts the nKV cache heads across the n_rep query group as
+        //    stride-0 views (no [B,KV,nH,D] repeat) but still materializes the [B,nH,S,KV] scores.
+        //  - flash_attention (CPPGRAD_FLASH_ATTN): online-softmax streaming over keys, so the score
+        //    matrix is NEVER materialized -> O(1) attention memory (no per-chunk score-transient cap
+        //    needed) and removes the prefix-sized transient for both prefill and decode.
+        // Both bit-equivalent to repeat_kv + SDPA (tests/test_{gqa,flash}_attention.cpp). All model
+        // masks are causal-at-offset, so flash uses causal-by-position with q_offset = KV - S.
+        static const bool FLASH = std::getenv("CPPGRAD_FLASH_ATTN") != nullptr;
+        utils::Ref<ir::Tensor> attn_out;
+        if (FLASH) {
+            size_t KVlen = k_full->shape()[1], Slen = q->shape()[1];
+            attn_out = nn::functional::flash_attention(q, k_full, v_full, (size_t)n_rep,
+                                                       /*causal=*/true, KVlen - Slen);  // [B,S,nH,D]
+        } else {
+            attn_out = nn::functional::gqa_attention(q, k_full, v_full, mask, (size_t)n_rep);  // [B,S,nH,D]
         }
-
-        auto attn_out = nn::functional::scaled_dot_product_attention(q, k_rep, v_rep, mask);  // [B,S,nH,D]
 
         // Output gate (Qwen3.5+): attn_out * sigmoid(gate), elementwise per head/dim.
         auto gate_sig = ir::div(1.0f, ir::add(ir::exp(ir::neg(gate)), 1.0f));
@@ -496,32 +506,35 @@ private:
         auto decay_all = ir::exp(ir::neg(A * sp));                            // exp(g) in (0,1)
         auto beta_all  = ir::div(1.0f, ir::add(ir::exp(ir::neg(b3)), 1.0f));  // sigmoid(b)
 
-        // -- sequential gated delta rule;  state: [BH, key_head, val_head] --
-        utils::Ref<ir::Tensor> state = state_in ? state_in
-                                                : ir::zeros({BH, key_head, val_head}, dev);
-        std::vector<utils::Ref<ir::Tensor>> outs;
-        outs.reserve(S);
-        for (size_t t = 0; t < S; ++t) {
-            auto qt = ir::reshape(ir::slice(q, {0, t, 0, 0}, {B, t + 1, n_v, key_head}), {BH, key_head});
-            auto kt = ir::reshape(ir::slice(k, {0, t, 0, 0}, {B, t + 1, n_v, key_head}), {BH, key_head});
-            auto vt = ir::reshape(ir::slice(v, {0, t, 0, 0}, {B, t + 1, n_v, val_head}), {BH, val_head});
-            auto dt = ir::reshape(ir::slice(decay_all, {0, t, 0}, {B, t + 1, n_v}), {BH, 1, 1});
-            auto bt = ir::reshape(ir::slice(beta_all,  {0, t, 0}, {B, t + 1, n_v}), {BH, 1});
+        // -- gated delta rule via chunked-parallel scan --
+        // Bit-equivalent to the per-token sequential recurrence (tests/test_gated_delta_chunked.cpp),
+        // but computed with batched matmuls over sub-chunks: O(S/chunk) kernel launches instead of
+        // O(S). This is what makes long-prompt prefill of a linear-attention (hybrid) model tractable
+        // -- the per-token scan launched ~hundreds of tiny kernels per token per layer. The helper
+        // wants the batched [BH,S,d] layout (BH = B*n_v); reorder [B,S,n_v,d] -> [B,n_v,S,d] -> [BH,S,d].
+        auto to_bh = [&](const utils::Ref<ir::Tensor>& t, size_t d) {
+            return ir::reshape(ir::permute(t, {0, 2, 1, 3}), {BH, S, d});
+        };
+        auto q_bh     = to_bh(q, key_head);
+        auto k_bh     = to_bh(k, key_head);
+        auto v_bh     = to_bh(v, val_head);
+        auto decay_bh = ir::reshape(ir::permute(decay_all, {0, 2, 1}), {BH, S});  // [B,S,n_v]->[BH,S]
+        auto beta_bh  = ir::reshape(ir::permute(beta_all,  {0, 2, 1}), {BH, S});
 
-            auto kt_c = ir::reshape_view(kt, {BH, key_head, 1});   // [BH,key,1]
-            state = state * dt;                                    // decay         [BH,key,val]
-            auto kv_mem = ir::sum(state * kt_c, {1});              // S^T k_t       [BH,val]
-            auto delta  = (vt - kv_mem) * bt;                      // (v-kv)*beta   [BH,val]
-            auto delta_r = ir::reshape_view(delta, {BH, 1, val_head});
-            state = state + kt_c * delta_r;                        // += outer      [BH,key,val]
-            auto qt_c = ir::reshape_view(qt, {BH, key_head, 1});
-            auto ot = ir::sum(state * qt_c, {1});                  // S^T q_t       [BH,val]
-            outs.push_back(ir::reshape(ot, {B, 1, n_v, val_head}));
-        }
-        _last_linear_state = state;
+        // Sub-chunk length for the scan (override CPPGRAD_DELTA_CHUNK). 64 is the usual sweet spot;
+        // smaller is more numerically stable (the de-decay step exp(-cumsum(g)) grows within a chunk),
+        // larger is fewer kernels.
+        static const size_t SCAN_CHUNK = []{
+            const char* e = std::getenv("CPPGRAD_DELTA_CHUNK");
+            return e ? (size_t)std::max(1, atoi(e)) : (size_t)32;
+        }();
+        utils::Ref<ir::Tensor> state_out;
+        auto o_bh = nn::functional::gated_delta_scan_chunked(
+            q_bh, k_bh, v_bh, decay_bh, beta_bh, state_in, state_out, SCAN_CHUNK);  // [BH,S,val_head]
+        _last_linear_state = state_out;
 
-        utils::Ref<ir::Tensor> o = outs[0];
-        for (size_t t = 1; t < S; ++t) o = ir::concat(o, outs[t], 1);  // [B,S,n_v,val_head]
+        // [BH,S,val_head] -> [B,n_v,S,val_head] -> [B,S,n_v,val_head]
+        auto o = ir::permute(ir::reshape(o_bh, {B, n_v, S, val_head}), {0, 2, 1, 3});
 
         // -- gated RMSNorm (Qwen3-Next: norm FIRST, then gate by silu(z)), then out_proj --
         o = nn::functional::rms_norm(o, la_norm_weight, eps);       // rmsnorm(core)*weight, over val_head

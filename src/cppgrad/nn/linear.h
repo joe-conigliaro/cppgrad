@@ -109,7 +109,7 @@ public:
     }
 
     utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& input) override {
-        if (quantized) return ir::quantized_matmul(input, qweight, scales, biases, params);
+        if (quantized) return ir::quantized_matmul(input, qweight, {scales, biases}, params);
         auto output = ir::matmul(input, weight);
         if (bias) output = ir::add(output, bias);
         return output;

@@ -142,19 +142,67 @@ void CPUBackend::reduce_op(ir::ReduceOpType op_type, const Buffer& a, const back
     }));
 }
 
-void CPUBackend::quantized_matmul(const Buffer& a, const Buffer& qweight, const Buffer& scales,
-                                  const Buffer& biases, Buffer& out,
+void CPUBackend::quantized_matmul(const Buffer& a, const Buffer& qweight,
+                                  const std::vector<const Buffer*>& aux, Buffer& out,
                                   size_t M, size_t N, size_t K, const ir::QuantParams& params) const {
+    if ((int)aux.size() != ir::aux_buffer_count(params.scheme))
+        throw std::runtime_error("CPUBackend::quantized_matmul: wrong aux buffer count for scheme");
     switch (params.scheme) {
-        case ir::QuantScheme::MLX_AFFINE_U8:
+        case ir::QuantScheme::MLX_AFFINE: {
+            // TODO(4-bit): matmul_quant_affine_f32 hardcodes 8-bit unpacking (4 codes/u32). For bits==4
+            // (8 codes/u32, pack_factor 8) add a code-width branch in the unpack; dequant math and the
+            // {scales,biases} layout are identical.
+            if (params.bits != 8)
+                throw std::runtime_error("CPUBackend::quantized_matmul: MLX_AFFINE only supports bits=8 (4-bit kernel is TODO)");
+            const Buffer& scales = *aux[0];
+            const Buffer& biases = *aux[1];
             cpu::matmul_quant_affine_f32(static_cast<const float*>(a.data()),
                                          static_cast<const uint32_t*>(qweight.data()),
                                          static_cast<const float*>(scales.data()),
                                          static_cast<const float*>(biases.data()),
                                          static_cast<float*>(out.data()), M, N, K, params.group_size);
             return;
+        }
     }
     throw std::runtime_error("CPUBackend::quantized_matmul: unsupported quant scheme");
+}
+
+// Flash attention (online softmax over keys, no [S,KV] materialization). Inputs contiguous, native
+// layout: q [B,S,nH,Dh], k,v [B,KV,nKV,Dh] -> out [B,S,nH,Dh]. One independent (b,s,h) row per task.
+void CPUBackend::flash_attention(const Buffer& q, const Buffer& k, const Buffer& v, Buffer& out,
+                                 size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
+                                 float scale, int n_rep, bool causal, size_t q_offset) const {
+    const float* Q = static_cast<const float*>(q.data());
+    const float* K = static_cast<const float*>(k.data());
+    const float* V = static_cast<const float*>(v.data());
+    float* O = static_cast<float*>(out.data());
+    const size_t rows = B * S * nH;
+    cpu::parallel_for((size_t)0, rows, [&](size_t r0, size_t r1) {
+        for (size_t r = r0; r < r1; ++r) {
+            size_t h = r % nH, s = (r / nH) % S, b = r / (nH * S);
+            size_t kv = h / (size_t)n_rep;
+            const float* qp = Q + ((b * S + s) * nH + h) * Dh;
+            float* op = O + ((b * S + s) * nH + h) * Dh;
+            size_t jmax = causal ? std::min(KV, q_offset + s + 1) : KV;
+            float m = -std::numeric_limits<float>::infinity(), l = 0.0f;
+            std::vector<float> acc(Dh, 0.0f);
+            for (size_t j = 0; j < jmax; ++j) {
+                const float* kp = K + ((b * KV + j) * nKV + kv) * Dh;
+                float sij = 0.0f;
+                for (size_t d = 0; d < Dh; ++d) sij += qp[d] * kp[d];
+                sij *= scale;
+                float m_new = std::max(m, sij);
+                float corr = std::exp(m - m_new);   // m=-inf first iter -> 0
+                float p = std::exp(sij - m_new);
+                l = l * corr + p;
+                const float* vp = V + ((b * KV + j) * nKV + kv) * Dh;
+                for (size_t d = 0; d < Dh; ++d) acc[d] = acc[d] * corr + p * vp[d];
+                m = m_new;
+            }
+            float inv = l > 0.0f ? 1.0f / l : 0.0f;
+            for (size_t d = 0; d < Dh; ++d) op[d] = acc[d] * inv;
+        }
+    });
 }
 
 void CPUBackend::matmul(const Buffer& a, const backend::View& va,

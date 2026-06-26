@@ -32,6 +32,13 @@ struct BinaryParams {
     unsigned short pad2;
 };
 
+// Flash attention params (must match the struct in metal_kernels.metal). q [B,S,nH,Dh],
+// k,v [B,KV,nKV,Dh] -> out [B,S,nH,Dh]; query head h reads kv head h/n_rep.
+struct FlashParams {
+    unsigned int B, S, nH, Dh, KV, nKV, n_rep, causal, q_offset;
+    float        scale;
+};
+
 struct MatmulParams {
     View32 a_v;
     View32 b_v;

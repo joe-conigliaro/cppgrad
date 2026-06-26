@@ -407,19 +407,45 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
         return;
     }
 
-    // Prefill / general path: one thread per output element.
-    work.pso = cache->get("matmul_quant_f32");
+    // Prefill / general path (M > 1): register-blocked, threadgroup-memory-tiled GEMM
+    // (matmul_quant_gemm_tiled_f32) -- 64x64 output tile, 256 threads x 4x4 micro-tile, weight tile
+    // dequantized ONCE into shared memory and reused across all 64 rows (full batch reuse + high
+    // occupancy).
+    constexpr uint32_t QT_BM = 64, QT_BN = 64;  // must match #defines in the .metal kernel
+    uint32_t m = (uint32_t)M;
+    work.pso = cache->get("matmul_quant_gemm_tiled_f32");
     work.buffers.push_back({as_mtl(a), 0});
     work.buffers.push_back({as_mtl(qweight), 0});
     work.buffers.push_back({as_mtl(scales), 0});
     work.buffers.push_back({as_mtl(biases), 0});
     work.buffers.push_back({as_mtl(out), 0});
-    uint32_t m = (uint32_t)M;
     work.add_bytes(5, &m, sizeof(uint32_t));
     work.add_bytes(6, &n, sizeof(uint32_t));
     work.add_bytes(7, &k, sizeof(uint32_t));
     work.add_bytes(8, &gs, sizeof(uint32_t));
-    set_linear(work, M * N);   // one thread per output element
+    work.useThreadgroups = true;
+    work.grid = MTLSizeMake((N + QT_BN - 1) / QT_BN, (M + QT_BM - 1) / QT_BM, 1);  // (N-tile, M-tile)
+    work.threadsPerThreadgroup = MTLSizeMake(QT_BN / 4, QT_BM / 4, 1);             // 16x16 = 256
+    encode_submit(work);
+}
+
+void submit_flash_attention(const Buffer &q, const Buffer &k, const Buffer &v, Buffer &out,
+                            size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
+                            float scale, int n_rep, bool causal, size_t q_offset) const {
+    if (out.size_bytes() == 0) return;
+    FlashParams P;
+    P.B=(uint)B; P.S=(uint)S; P.nH=(uint)nH; P.Dh=(uint)Dh; P.KV=(uint)KV; P.nKV=(uint)nKV;
+    P.n_rep=(uint)n_rep; P.causal=causal?1u:0u; P.q_offset=(uint)q_offset; P.scale=scale;
+    ComputeWork work;
+    work.pso = cache->get("flash_attention_f32");
+    work.buffers.push_back({as_mtl(q), 0});
+    work.buffers.push_back({as_mtl(k), 0});
+    work.buffers.push_back({as_mtl(v), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    work.add_bytes(4, &P, sizeof(FlashParams));
+    work.useThreadgroups = true;
+    work.grid = MTLSizeMake(nH, S, B);            // one threadgroup per (head, query, batch)
+    work.threadsPerThreadgroup = MTLSizeMake(32, 1, 1);  // one simdgroup splits head_dim
     encode_submit(work);
 }
 
@@ -633,12 +659,25 @@ const backend::View &vo) const {
     _impl->submit_matmul(a, va, b, vb, out, vo);
 }
 
-void MetalBackend::quantized_matmul(const Buffer &a, const Buffer &qweight, const Buffer &scales,
-                                    const Buffer &biases, Buffer &out,
+void MetalBackend::flash_attention(const Buffer &q, const Buffer &k, const Buffer &v, Buffer &out,
+                                   size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
+                                   float scale, int n_rep, bool causal, size_t q_offset) const {
+    _impl->submit_flash_attention(q, k, v, out, B, S, nH, Dh, KV, nKV, scale, n_rep, causal, q_offset);
+}
+
+void MetalBackend::quantized_matmul(const Buffer &a, const Buffer &qweight,
+                                    const std::vector<const Buffer*> &aux, Buffer &out,
                                     size_t M, size_t N, size_t K, const ir::QuantParams &params) const {
+    if ((int)aux.size() != ir::aux_buffer_count(params.scheme))
+        throw std::runtime_error("MetalBackend::quantized_matmul: wrong aux buffer count for scheme");
     switch (params.scheme) {
-        case ir::QuantScheme::MLX_AFFINE_U8:
-            _impl->submit_matmul_quant(a, qweight, scales, biases, out, M, N, K, params.group_size);
+        case ir::QuantScheme::MLX_AFFINE:
+            // TODO(4-bit): the kernels (matmul_quant_*_f32) hardcode 8-bit unpacking (4 codes/u32).
+            // For bits==4 (8 codes/u32, pack_factor 8) add a code-width branch in the unpack (shift by
+            // 4*(k&7), mask 0xF) -- the dequant math + {scales,biases} layout are otherwise identical.
+            if (params.bits != 8)
+                throw std::runtime_error("MetalBackend::quantized_matmul: MLX_AFFINE only supports bits=8 (4-bit kernel is TODO)");
+            _impl->submit_matmul_quant(a, qweight, *aux[0], *aux[1], out, M, N, K, params.group_size);
             return;
     }
     throw std::runtime_error("MetalBackend::quantized_matmul: unsupported quant scheme");

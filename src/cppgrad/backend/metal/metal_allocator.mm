@@ -86,10 +86,27 @@ MetalAllocator::~MetalAllocator() = default;
 // Allocate Metal buffer (Shared by default). This is host-visible and simple to
 // use. If you switch to Private for performance, copy_to/from_device already
 // handle staging.
+// Throw (catchable) instead of returning a nil-backed Buffer when Metal can't satisfy an allocation.
+// Otherwise the nil MTLBuffer is used by a later kernel/copy and faults the process with SIGBUS (no
+// lag, no exception) -- e.g. a huge KV cache from a long prompt + large max_tokens. As a catchable
+// std::runtime_error the server's try/catch logs it and stays up.
+static void check_alloc(id<MTLBuffer> buf, size_t bytes, id<MTLDevice> dev) {
+    if (buf) return;
+    throw std::runtime_error("Metal buffer allocation failed: requested " + std::to_string(bytes) +
+                             " bytes (device maxBufferLength=" + std::to_string((size_t)[dev maxBufferLength]) +
+                             ", recommendedMaxWorkingSetSize=" + std::to_string((size_t)[dev recommendedMaxWorkingSetSize]) + ")");
+}
+
 std::shared_ptr<Buffer> MetalAllocator::allocate(size_t num_elements,
 DType dtype) {
     const size_t bytes = num_elements * size(dtype);
+    // Zero-size allocation: Metal returns nil for newBufferWithLength:0 (which check_alloc would treat
+    // as failure), so hand back an empty null-backed Buffer -- matching the host-data allocate overload.
+    if (bytes == 0) {
+        return std::make_shared<Buffer>(nullptr, 0, dtype, DeviceType::METAL, this);
+    }
     id<MTLBuffer> buf = [_impl->device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+    check_alloc(buf, bytes, _impl->device);
     return std::make_shared<Buffer>((__bridge_retained void *)buf, bytes, dtype, DeviceType::METAL, this);
 }
 
@@ -100,6 +117,7 @@ MetalAllocator::allocate(const void *src, size_t num_elements, DType dtype) {
         return std::make_shared<Buffer>(nullptr, 0, dtype, DeviceType::METAL, this);
     }
     id<MTLBuffer> buf = [_impl->device newBufferWithBytes:src length:bytes options:MTLResourceStorageModeShared];
+    check_alloc(buf, bytes, _impl->device);
     return std::make_shared<Buffer>((__bridge_retained void *)buf, bytes, dtype, DeviceType::METAL, this);
 }
 

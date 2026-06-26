@@ -17,9 +17,12 @@ class Backend {
 public:
     virtual ~Backend() = default;
     
-    // Commit any work the backend has batched but not yet executed. Called at
-    // GraphScope boundaries. No-op for synchronous backends (e.g. CPU); the Metal
-    // backend flushes its execution context so scope work completes at scope end.
+    // Commit any work the backend has batched but not yet executed (Metal: commit+wait the command
+    // buffer, freeing the intermediate output buffers it held). No-op for synchronous backends (CPU).
+    // Called at GraphScope boundaries, and explicitly between phases of a long computation (e.g.
+    // prefill chunks) to bound the number of resident buffers -- otherwise a long prompt accumulates
+    // every chunk's buffers in one uncommitted command buffer until Metal can't satisfy even a tiny
+    // allocation ("allocation failed").
     //
     // This stateless hook is enough while a backend's batching state is global
     // (Metal's execution context is a long-lived singleton). If a backend ever
@@ -59,11 +62,23 @@ public:
     virtual void reduce_op(ir::ReduceOpType op_type, const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo, const std::vector<int> &axes, bool keep_dims) const = 0;
     virtual void matmul(const Buffer &a, const backend::View &va, const Buffer &b, const backend::View &vb, Buffer &out, const backend::View &vo) const = 0;
 
+    // Fused flash attention (inference only), contiguous inputs in native layout:
+    //   q [B,S,nH,Dh], k,v [B,KV,nKV,Dh] -> out [B,S,nH,Dh].
+    // out = softmax(scale * QKᵀ + causal)V via online-softmax over keys (no [S,KV] materialization).
+    // query head h reads kv head h/n_rep; if causal, query row s attends keys [0, q_offset+s].
+    virtual void flash_attention(const Buffer & /*q*/, const Buffer & /*k*/, const Buffer & /*v*/,
+                                 Buffer & /*out*/, size_t /*B*/, size_t /*S*/, size_t /*nH*/, size_t /*Dh*/,
+                                 size_t /*KV*/, size_t /*nKV*/, float /*scale*/, int /*n_rep*/,
+                                 bool /*causal*/, size_t /*q_offset*/) const {
+        throw std::runtime_error("flash_attention: not implemented for this backend");
+    }
+
     // Quantized matmul: out[M,N] = a[M,K] @ dequant(qweight)^T (dequant in kernel). Dispatches on
     // params.scheme internally (one entry point for all schemes, not a virtual per quant type).
-    // For MLX_AFFINE_U8: a/scales/biases/out are contiguous fp32; qweight is contiguous u32 [N,K/4].
-    virtual void quantized_matmul(const Buffer &a, const Buffer &qweight, const Buffer &scales,
-                                  const Buffer &biases, Buffer &out,
+    // `aux` holds the scheme's metadata buffers in a scheme-defined order (see ir::QuantScheme):
+    // for MLX_AFFINE, aux = {scales, biases}, all contiguous fp32; qweight is contiguous u32 [N,K/pack].
+    virtual void quantized_matmul(const Buffer &a, const Buffer &qweight,
+                                  const std::vector<const Buffer*> &aux, Buffer &out,
                                   size_t M, size_t N, size_t K, const ir::QuantParams &params) const = 0;
 
     // Gather: table[V, D] (float), indices[N] (int32) -> out[N, D] (float)

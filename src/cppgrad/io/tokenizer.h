@@ -118,6 +118,16 @@ public:
 
     int vocab_size() const { return (int)id_to_tok_.size(); }
 
+    // Look up a token ID for a special token by content string.
+    // Returns -1 if not found.
+    int get_token_id(const std::string& content) const {
+        auto it = special_.find(content);
+        if (it != special_.end()) return it->second;
+        auto it2 = vocab_.find(content);
+        if (it2 != vocab_.end()) return it2->second;
+        return -1;
+    }
+
 private:
     std::unordered_map<std::string, int> vocab_;
     std::vector<std::string> id_to_tok_;

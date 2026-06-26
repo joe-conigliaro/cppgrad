@@ -516,6 +516,172 @@ inline utils::Ref<ir::Tensor> attn_output_gate(
     return attn_output * gate_bc;
 }
 
+// Grouped-query attention WITHOUT materializing the repeated K/V.
+//   q: [B,S,nH,Dh]   k,v: [B,KV,nKV,Dh]   (nH = nKV * n_rep)   mask: additive [1,1,S,KV] or null.
+// The standard path (repeat_kv + scaled_dot_product_attention) expands K/V to nH heads, which forces
+// a contiguous [B,KV,nH,Dh] copy per layer -- prefix-sized, so long-context prefill/decode bloats and
+// OOMs. Here the KV heads are broadcast across the n_rep query group as STRIDE-0 VIEWS (no copy):
+// k/v are reshaped (contiguous -> view) to insert a unit group dim, broadcast over n_rep, and the
+// grouped batched matmul reads them with a zero batch stride. The only prefix-sized tensor that
+// materializes is the score matrix [B,nKV,n_rep,S,KV] (same size as the non-grouped [B,nH,S,KV],
+// which the caller bounds via the prefill chunk). Equivalent to repeat_kv+SDPA
+// (tests/test_gqa_attention.cpp). For n_rep==1 it is plain multi-head attention.
+inline utils::Ref<ir::Tensor> gqa_attention(
+    const utils::Ref<ir::Tensor>& q, const utils::Ref<ir::Tensor>& k,
+    const utils::Ref<ir::Tensor>& v, const utils::Ref<ir::Tensor>& mask, size_t n_rep) {
+    const auto& qs = q->shape();
+    const size_t B = qs[0], S = qs[1], nH = qs[2], Dh = qs[3];
+    const size_t KV = k->shape()[1], nKV = k->shape()[2];
+    const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
+
+    // q: [B,S,nH,Dh] -> [B,S,nKV,n_rep,Dh] -> [B,nKV,n_rep,S,Dh]  (q head i pairs with kv head i/n_rep)
+    auto q5 = ir::permute(ir::reshape(q, {B, S, nKV, n_rep, Dh}), {0, 2, 3, 1, 4});
+    // k (contiguous [B,KV,nKV,Dh]) -> [B,KV,nKV,1,Dh] (view) -> bcast [B,KV,nKV,n_rep,Dh] (stride-0)
+    //   -> permute to k^T per head [B,nKV,n_rep,Dh,KV] (view, no copy).
+    auto k5 = ir::broadcast(ir::reshape(k, {B, KV, nKV, 1, Dh}), {B, KV, nKV, n_rep, Dh});
+    auto kbc = ir::permute(k5, {0, 2, 3, 4, 1});                 // [B,nKV,n_rep,Dh,KV]
+    auto scores = ir::mul(ir::matmul(q5, kbc), scale);           // [B,nKV,n_rep,S,KV]
+    if (mask) scores = ir::add(scores, ir::reshape(mask, {1, 1, 1, S, KV}));
+    auto attn = softmax(scores);                                 // over last axis (KV)
+    // v -> [B,KV,nKV,1,Dh] (view) -> bcast [B,KV,nKV,n_rep,Dh] -> [B,nKV,n_rep,KV,Dh] (view).
+    auto v5 = ir::broadcast(ir::reshape(v, {B, KV, nKV, 1, Dh}), {B, KV, nKV, n_rep, Dh});
+    auto vbc = ir::permute(v5, {0, 2, 3, 1, 4});                 // [B,nKV,n_rep,KV,Dh]
+    auto out5 = ir::matmul(attn, vbc);                           // [B,nKV,n_rep,S,Dh]
+    // -> [B,S,nKV,n_rep,Dh] -> [B,S,nH,Dh]
+    return ir::reshape(ir::permute(out5, {0, 3, 1, 2, 4}), {B, S, nH, Dh});
+}
+
+// Fused flash attention: same result as gqa_attention but streams over keys with online softmax, so
+// the [S,KV] score matrix is NEVER materialized (O(1) extra memory). Causal by position: query row s
+// attends keys [0, q_offset+s]. q [B,S,nH,Dh], k,v [B,KV,nKV,Dh] (nH=n_rep*nKV) -> [B,S,nH,Dh].
+inline utils::Ref<ir::Tensor> flash_attention(const utils::Ref<ir::Tensor>& q,
+                                              const utils::Ref<ir::Tensor>& k,
+                                              const utils::Ref<ir::Tensor>& v,
+                                              size_t n_rep, bool causal, size_t q_offset) {
+    const float scale = 1.0f / std::sqrt(static_cast<float>(q->shape()[3]));
+    // Ensure contiguous (the kernel indexes densely). No-op when already contiguous.
+    auto qc = ir::reshape(q, q->shape());
+    auto kc = ir::reshape(k, k->shape());
+    auto vc = ir::reshape(v, v->shape());
+    return ir::flash_attention(qc, kc, vc, scale, (int)n_rep, causal, q_offset);
+}
+
+// Chunked-parallel gated delta-rule scan (GatedDeltaNet / Qwen3-Next linear attention).
+//
+// Mathematically equal to the sequential recurrence (per token, state S=[dk,dv]):
+//     S = decay_t * S;  kv = S^T k_t;  S += k_t * ((v_t - kv) * beta_t)^T;  o_t = S^T q_t
+// but computed with batched matmuls over sub-chunks of length `chunk`, so a length-S sequence costs
+// O(S/chunk) kernel launches instead of O(S). This is the standard chunked delta rule (Yang et al.,
+// "Parallelizing Linear Transformers with the Delta Rule over Sequence Length") with the scalar gate
+// folded in via per-token cumulative decay.
+//
+// Derivation (per sub-chunk, incoming actual state S_in, tokens i=0..L-1; d_i = prod_{j<=i} decay_j):
+//   With per-token scalar decay, the actual-scale WY form keeps every decay factor as a PAIRWISE
+//   ratio d_i/d_j = exp(G_i - G_j) with i>=j (G = inclusive cumsum of log-decay, decreasing), which
+//   is always in (0,1] -- so nothing grows and the scan is numerically safe in bf16 (the prior
+//   "de-decay" form V/d * d overflowed/lost all precision in bf16). Let A[i,j] = beta_i (d_i/d_j)
+//   (k_i.k_j) for j<i (else 0):
+//     U     = (I+A)^{-1} . beta (V - d (.) (K S_in))
+//     O_i   = d_i (S_in^T q_i) + sum_{j<=i} (d_i/d_j)(q_i.k_j) U_j
+//     S_out = d_{L-1} S_in + sum_j (d_{L-1}/d_j) k_j U_j^T
+//   (I+A)^{-1} via doubling Neumann series (A strictly-lower => nilpotent), log2(L) matmuls.
+//   exp of the pairwise term is clamped to <=0 before exp (the masked-out i<j entries would be >0)
+//   so no inf/NaN leaks through the triangular mask.
+//
+// Inputs are batched over BH = B * n_value_heads (contiguous):
+//   q,k: [BH,S,dk]   v: [BH,S,dv]   decay: [BH,S] (= exp(g) in (0,1])   beta: [BH,S]
+//   state_in: [BH,dk,dv] or null (=> zeros).  state_out receives the final [BH,dk,dv] state.
+// Returns o: [BH,S,dv].
+inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
+    const utils::Ref<ir::Tensor>& q, const utils::Ref<ir::Tensor>& k,
+    const utils::Ref<ir::Tensor>& v, const utils::Ref<ir::Tensor>& decay,
+    const utils::Ref<ir::Tensor>& beta, const utils::Ref<ir::Tensor>& state_in,
+    utils::Ref<ir::Tensor>& state_out, size_t chunk = 64)
+{
+    auto dev = q->device_type();
+    const size_t BH = q->shape()[0];
+    const size_t S  = q->shape()[1];
+    const size_t dk = q->shape()[2];
+    const size_t dv = v->shape()[2];
+
+    utils::Ref<ir::Tensor> state = state_in ? state_in : ir::zeros({BH, dk, dv}, dev);
+    // log-decay (<=0). Floor decay away from 0 first: the real gate g = -exp(A_log)*softplus(...) can
+    // be very negative, so decay = exp(g) underflows to 0 -> log(0) = -inf -> (-inf)-(-inf) = NaN in
+    // the pairwise-ratio term, corrupting the whole output. exp(-46) is already 0 to fp32 in every
+    // downstream product, so flooring at 1e-20 (log -> -46) changes nothing numerically but stays
+    // finite. (The sequential form multiplied by decay directly and never hit this.)
+    auto g_all = ir::reshape(ir::log(ir::add(decay, 1e-20f)), {BH, S, 1});
+    auto beta_all = ir::reshape(beta, {BH, S, 1});
+
+    std::vector<utils::Ref<ir::Tensor>> o_chunks;
+    for (size_t off = 0; off < S; off += chunk) {
+        const size_t L = std::min(chunk, S - off);
+
+        auto qc = ir::slice(q, {0, off, 0}, {BH, off + L, dk});      // [BH,L,dk]
+        auto kc = ir::slice(k, {0, off, 0}, {BH, off + L, dk});
+        auto vc = ir::slice(v, {0, off, 0}, {BH, off + L, dv});      // [BH,L,dv]
+        auto gc = ir::slice(g_all,    {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
+        auto bc = ir::slice(beta_all, {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
+
+        // Triangular masks, shape [1,L,L] (broadcast over heads):
+        //   M_incl[i,j]   = 1 if j<=i   M_strict[i,j] = 1 if j<i   M_id[i,j] = 1 if i==j
+        std::vector<float> mincl(L * L, 0.f), mstrict(L * L, 0.f), mid(L * L, 0.f);
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < L; ++j) {
+                if (j <= i) mincl[i * L + j] = 1.f;
+                if (j <  i) mstrict[i * L + j] = 1.f;
+                if (i == j) mid[i * L + j] = 1.f;
+            }
+        auto M_incl   = ir::from_vector<float>(mincl,   {1, L, L}, dev);
+        auto M_strict = ir::from_vector<float>(mstrict, {1, L, L}, dev);
+        auto M_id     = ir::from_vector<float>(mid,     {1, L, L}, dev);
+
+        // Inclusive cumulative log-decay G_i = sum_{j<=i} g_j (<=0), via mask-multiply (no matmul).
+        auto g_row = ir::reshape(gc, {BH, 1, L});                        // [BH,1,L]
+        auto G = ir::sum(ir::mul(g_row, M_incl), {2}, true);            // [BH,L,1]
+        auto d_inc = ir::exp(G);                                        // d_i in (0,1]   [BH,L,1]
+
+        // Pairwise decay ratio D[i,j] = d_i/d_j = exp(G_i - G_j), clamped to <=0 before exp so the
+        // masked-out (i<j, would be >0) entries can't overflow:  exp(min(G_i-G_j, 0)).
+        auto E = ir::sub(G, ir::reshape(G, {BH, 1, L}));               // [BH,L,L] E[i,j]=G_i-G_j
+        auto Dexp = ir::exp(ir::neg(ir::relu(ir::neg(E))));            // exp(min(E,0)) in (0,1]
+
+        auto kt = ir::transpose(kc, 1, 2);                             // [BH,dk,L]
+        // A[i,j] = beta_i (d_i/d_j)(k_i.k_j), strictly lower (j<i)
+        auto A = ir::mul(ir::mul(ir::mul(ir::matmul(kc, kt), Dexp), M_strict), bc);
+
+        // Inv = (I + A)^{-1} = sum_{p>=0}(-A)^p (finite; A^L=0). Doubling: R_{2m}=(I+P^m)R_m.
+        auto P = ir::neg(A);
+        auto R = ir::add(ir::mul(P, 0.0f), M_id);                      // R_1 = I lifted to [BH,L,L]
+        auto Pm = P;
+        for (size_t steps = 1; steps < L; steps *= 2) {
+            R  = ir::matmul(ir::add(Pm, M_id), R);
+            Pm = ir::matmul(Pm, Pm);
+        }
+        auto Inv = R;
+
+        auto KS  = ir::matmul(kc, state);                             // K S_in   [BH,L,dv]
+        auto RHS = ir::mul(ir::sub(vc, ir::mul(d_inc, KS)), bc);       // beta (V - d (.) K S_in)
+        auto U   = ir::matmul(Inv, RHS);                              // [BH,L,dv]
+
+        auto QS    = ir::matmul(qc, state);                           // Q S_in   [BH,L,dv]
+        auto QKt_l = ir::mul(ir::mul(ir::matmul(qc, kt), Dexp), M_incl); // (d_i/d_j) tril_incl(Q K^T)
+        auto intra = ir::matmul(QKt_l, U);                            // [BH,L,dv]
+        o_chunks.push_back(ir::add(ir::mul(QS, d_inc), intra));       // d_i (Q S_in) + intra
+
+        // S_out = d_{L-1} S_in + sum_j (d_{L-1}/d_j) k_j U_j^T = d_last S_in + K^T (c (.) U)
+        auto d_last = ir::reshape(ir::slice(d_inc, {0, L - 1, 0}, {BH, L, 1}), {BH, 1, 1});
+        auto cvec = ir::exp(ir::neg(ir::relu(ir::neg(ir::sub(ir::slice(G, {0, L - 1, 0}, {BH, L, 1}), G)))));
+        auto KtU = ir::matmul(kt, ir::mul(U, cvec));                  // [BH,dk,dv]
+        state = ir::add(ir::mul(state, d_last), KtU);
+    }
+    state_out = state;
+
+    utils::Ref<ir::Tensor> o = o_chunks[0];
+    for (size_t i = 1; i < o_chunks.size(); ++i) o = ir::concat(o, o_chunks[i], 1);
+    return o;  // [BH,S,dv]
+}
+
 } // namespace functional
 } // namespace nn
 } // namespace cppgrad

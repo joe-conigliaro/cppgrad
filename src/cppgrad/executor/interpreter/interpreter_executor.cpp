@@ -172,12 +172,24 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
                     out_device->backend()->matmul(*parents[0], va, *parents[1], vb, *out_buf, vo);
                 }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::FlashAttentionOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    auto q_t = t->children()[0];   // [B,S,nH,Dh]
+                    auto k_t = t->children()[1];   // [B,KV,nKV,Dh]
+                    const size_t B = q_t->shape()[0], S = q_t->shape()[1], nH = q_t->shape()[2], Dh = q_t->shape()[3];
+                    const size_t KV = k_t->shape()[1], nKV = k_t->shape()[2];
+                    out_device->backend()->flash_attention(*parents[0], *parents[1], *parents[2], *out_buf,
+                        B, S, nH, Dh, KV, nKV, op.scale, op.n_rep, op.causal, op.q_offset);
+                }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::QuantizedMatMulOp>) {
                     out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                     const size_t M = t->children()[0]->shape()[0];
                     const size_t K = t->children()[0]->shape()[1];
                     const size_t N = t->children()[1]->shape()[0];   // qweight [N, K/pack_factor]
-                    out_device->backend()->quantized_matmul(*parents[0], *parents[1], *parents[2], *parents[3],
+                    // parents = [a, qweight, aux...]; aux meaning is scheme-defined.
+                    std::vector<const backend::Buffer*> aux;
+                    for (size_t pi = 2; pi < parents.size(); ++pi) aux.push_back(parents[pi].get());
+                    out_device->backend()->quantized_matmul(*parents[0], *parents[1], aux,
                                                             *out_buf, M, N, K, op.params);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::CopyOp>) {
