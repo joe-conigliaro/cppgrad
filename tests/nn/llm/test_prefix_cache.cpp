@@ -44,7 +44,7 @@ int main() {
         TEST_HEADER("prefix KV-cache reuse == cold prefill");
         auto dev = backend::DeviceManager::default_device_type();
 
-        Qwen3Config cfg = Qwen3Config::get_27b_qwen3_6();
+        Qwen3Config cfg = Qwen3Config::get_27b();
         cfg.hidden_size=32; cfg.num_hidden_layers=4; cfg.intermediate_size=64; cfg.vocab_size=50;
         cfg.num_attention_heads=4; cfg.num_key_value_heads=2; cfg.head_dim=8;
         cfg.linear_num_key_heads=2; cfg.linear_key_head_dim=4; cfg.linear_num_value_heads=4;

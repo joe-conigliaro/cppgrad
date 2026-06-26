@@ -32,7 +32,7 @@ static utils::Ref<ir::Tensor> rand_tensor(const std::vector<size_t>& shape, floa
 }
 
 static Qwen3Config tiny_cfg() {
-    Qwen3Config cfg = Qwen3Config::get_27b_qwen3_6();
+    Qwen3Config cfg = Qwen3Config::get_27b();
     cfg.hidden_size            = 32;
     cfg.num_hidden_layers      = 4;
     cfg.intermediate_size      = 64;

@@ -67,7 +67,7 @@ inline std::optional<Qwen3Config> parse_config(const std::string& name) {
     if (name == "3b")          return Qwen3Config::get_3b();
     if (name == "4b")          return Qwen3Config::get_4b();
     if (name == "7b")          return Qwen3Config::get_7b();
-    if (name == "27b_qwen3_6") return Qwen3Config::get_27b_qwen3_6();
+    if (name == "27b") return Qwen3Config::get_27b();
     return std::nullopt;
 }
 
@@ -177,7 +177,7 @@ struct GenStream {
 class ChatServer {
 public:
     bool load_model(const std::string& model_dir,
-                    const std::string& config_name = "27b_qwen3_6",
+                    const std::string& config_name = "27b",
                     bool quantize = true) {
         printf("[ChatServer] Loading model from: %s\n", model_dir.c_str());
 

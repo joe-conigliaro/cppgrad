@@ -29,7 +29,7 @@ static void test_prefill_equals_stepwise() {
     auto dev = backend::DeviceManager::default_device_type();
 
     // Tiny GatedDeltaNet config (n_v / n_kv = 2 -> exercises q/k head replication).
-    Qwen3Config cfg = Qwen3Config::get_27b_qwen3_6();
+    Qwen3Config cfg = Qwen3Config::get_27b();
     cfg.hidden_size            = 16;
     cfg.linear_num_key_heads   = 2;
     cfg.linear_key_head_dim    = 4;

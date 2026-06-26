@@ -50,7 +50,7 @@ for prefill/decode tokens-per-second.
 ```sh
 ./build/examples/llm/qwen3_inference \
     --model /path/to/models/mlx-community/Qwen3.6-27B-8bit \
-    --config 27b_qwen3_6 \
+    --config 27b \
     --prompt "An elephant is" \
     --max-tokens 28 \
     --quant
@@ -61,7 +61,7 @@ for prefill/decode tokens-per-second.
 ```text
 CPU device registered.
 METAL device registered.
-[Qwen3.5/3.6] Config: 27b_qwen3_6 hidden=5120 layers=64 heads=24 kv_heads=4 head_dim=256
+[Qwen3.5/3.6] Config: 27b hidden=5120 layers=64 heads=24 kv_heads=4 head_dim=256
 Default device set to: METAL
 [Qwen3.5/3.6] Device: METAL
 [Qwen3.5/3.6] Creating model...

@@ -5,7 +5,7 @@
 // tool calling on both streaming and non-streaming paths.
 //
 // Usage:
-//   ./chat_server --model-dir <path> [--config 27b_qwen3_6] [--port 8080] [--quant]
+//   ./chat_server --model-dir <path> [--config 27b] [--port 8080] [--quant]
 //
 // Endpoints:
 //   GET  /                     - health check
@@ -31,7 +31,7 @@ namespace anthropic = cppgrad::server::anthropic;
 
 struct ServerArgs {
     std::string model_dir = "/Users/joe.c/.omlx/models/mlx-community/Qwen3.6-27B-8bit/";
-    std::string config = "27b_qwen3_6";
+    std::string config = "27b";
     std::string host = "0.0.0.0";
     int port = 8080;
     bool quant = true;
@@ -74,7 +74,7 @@ static ServerArgs parse_args(int argc, char** argv) {
                 std::cout << "Usage: " << argv[0]
                           << " --model-dir <path> [--config <name>] [--port 8080] [--quant]\n"
                           << "       [--draft-model <path> [--draft-config 0.6b]] [--n-draft 4] [--no-mtp]\n"
-                          << "  --config: 0.6b, 1.5b, 3b, 4b, 7b, 27b_qwen3_6\n"
+                          << "  --config: 0.6b, 1.5b, 3b, 4b, 7b, 27b\n"
                           << "  speculative decode: auto-enabled if the checkpoint ships an MTP module;\n"
                           << "  or pass --draft-model for draft-model speculation. --n-draft sets the window.\n";
                 exit(0);

@@ -46,7 +46,7 @@ int main() {
         TEST_HEADER("KV cache: cached generate == full recompute");
         auto dev = backend::DeviceManager::default_device_type();
 
-        Qwen3Config cfg = Qwen3Config::get_27b_qwen3_6();
+        Qwen3Config cfg = Qwen3Config::get_27b();
         cfg.hidden_size            = 32;
         cfg.num_hidden_layers      = 4;
         cfg.intermediate_size      = 64;

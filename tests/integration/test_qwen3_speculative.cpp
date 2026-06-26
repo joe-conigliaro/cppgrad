@@ -10,7 +10,7 @@
 //
 // Heavy (loads a real checkpoint), so it is GATED: set QWEN_MODEL_DIR to run, else it skips.
 //   QWEN_MODEL_DIR=~/.omlx/models/mlx-community/Qwen3.6-27B-8bit \
-//   QWEN_CONFIG=27b_qwen3_6 [QWEN_DRAFT_DIR=...] [QWEN_DRAFT_CONFIG=...] ./build/tests/test_qwen3_speculative
+//   QWEN_CONFIG=27b [QWEN_DRAFT_DIR=...] [QWEN_DRAFT_CONFIG=...] ./build/tests/test_qwen3_speculative
 
 #include <cstdio>
 #include <cstdlib>
@@ -45,7 +45,7 @@ static Qwen3Config cfg_by_name(const std::string& n) {
     if (n == "3b")   return Qwen3Config::get_3b();
     if (n == "4b")   return Qwen3Config::get_4b();
     if (n == "7b")   return Qwen3Config::get_7b();
-    return Qwen3Config::get_27b_qwen3_6();
+    return Qwen3Config::get_27b();
 }
 
 int main() {
@@ -55,7 +55,7 @@ int main() {
         return 0;
     }
     std::string model_dir = dir;
-    std::string config = std::getenv("QWEN_CONFIG") ? std::getenv("QWEN_CONFIG") : "27b_qwen3_6";
+    std::string config = std::getenv("QWEN_CONFIG") ? std::getenv("QWEN_CONFIG") : "27b";
 
     backend::DeviceManager::instance().init();
     auto device = backend::DeviceManager::default_device_type();

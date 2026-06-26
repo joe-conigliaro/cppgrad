@@ -5,7 +5,7 @@
 // greedy token. A high match rate validates the MTP architecture / weight mapping / fc concat order.
 //
 // Heavy (loads a real checkpoint); GATED on QWEN_MTP_DIR:
-//   QWEN_MTP_DIR=~/.omlx/models/Jundot/Qwen3.6-27B-oQ8-mtp QWEN_CONFIG=27b_qwen3_6 \
+//   QWEN_MTP_DIR=~/.omlx/models/Jundot/Qwen3.6-27B-oQ8-mtp QWEN_CONFIG=27b \
 //     ./build/tests/test_qwen3_mtp
 
 #include <cstdio>
@@ -39,13 +39,13 @@ int main() {
     const char* dir = std::getenv("QWEN_MTP_DIR");
     if (!dir) { printf("[skip] set QWEN_MTP_DIR to run the MTP validation test\n"); return 0; }
     std::string model_dir = dir;
-    std::string config = std::getenv("QWEN_CONFIG") ? std::getenv("QWEN_CONFIG") : "27b_qwen3_6";
+    std::string config = std::getenv("QWEN_CONFIG") ? std::getenv("QWEN_CONFIG") : "27b";
 
     backend::DeviceManager::instance().init();
     auto device = backend::DeviceManager::default_device_type();
 
     io::BPETokenizer tok(model_dir + "/tokenizer.json");
-    Qwen3Model model(config == "27b_qwen3_6" ? Qwen3Config::get_27b_qwen3_6() : Qwen3Config::get_27b_qwen3_6(),
+    Qwen3Model model(config == "27b" ? Qwen3Config::get_27b() : Qwen3Config::get_27b(),
                      device, /*lazy_weights=*/true);
     model.load_from_safetensors(shards(model_dir), /*quantize=*/true);
 

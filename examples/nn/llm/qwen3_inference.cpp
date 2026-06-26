@@ -4,8 +4,8 @@
 // Qwen3/Qwen3.5/3.6 inference example - loads safetensors weights and runs greedy decoding
 //
 // Usage:
-//   ./qwen3_inference --model <safetensors_path> [--prompt "Hello"] [--max-tokens 50] [--config 0.6b|1.5b|3b|4b|7b|27b_qwen3_6]
-//   ./qwen3_inference --model-dir <directory_with_sharded_files> [--config 27b_qwen3_6]
+//   ./qwen3_inference --model <safetensors_path> [--prompt "Hello"] [--max-tokens 50] [--config 0.6b|1.5b|3b|4b|7b|27b]
+//   ./qwen3_inference --model-dir <directory_with_sharded_files> [--config 27b]
 //
 // Without --model: runs a dry run (creates model with random weights, runs one forward pass)
 
@@ -120,7 +120,7 @@ int main(int argc, char** argv) {
     else if (args.config_name == "3b")      config = cppgrad::nn::llm::qwen::Qwen3Config::get_3b();
     else if (args.config_name == "4b")      config = cppgrad::nn::llm::qwen::Qwen3Config::get_4b();
     else if (args.config_name == "7b")      config = cppgrad::nn::llm::qwen::Qwen3Config::get_7b();
-    else if (args.config_name == "27b_qwen3_6") config = cppgrad::nn::llm::qwen::Qwen3Config::get_27b_qwen3_6();
+    else if (args.config_name == "27b") config = cppgrad::nn::llm::qwen::Qwen3Config::get_27b();
     else {
         std::cerr << "Unknown config: " << args.config_name << "\n";
         return 1;

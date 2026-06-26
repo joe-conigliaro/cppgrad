@@ -69,7 +69,7 @@ int main() {
         std::vector<int32_t> prompt = {3, 7, 1, 9, 2};
 
         for (int L : {4, 8}) {
-            Qwen3Config cfg = Qwen3Config::get_27b_qwen3_6();
+            Qwen3Config cfg = Qwen3Config::get_27b();
             cfg.hidden_size         = 5120;      // matches 27B (isolates per-op size as trigger)
             cfg.num_hidden_layers   = L;
             cfg.intermediate_size   = 5120;

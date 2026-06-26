@@ -125,7 +125,7 @@ struct Qwen3Config {
 
     // --- Qwen3.5/3.6 preset ---
 
-    static Qwen3Config get_27b_qwen3_6() {
+    static Qwen3Config get_27b() {
         // Qwen3.6-27B pattern: 3 linear_attention + 1 full_attention, repeated
         std::vector<LayerType> layer_types;
         for (int i = 0; i < 64; ++i) {
