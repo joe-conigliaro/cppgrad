@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 #include "cppgrad/backend/buffer.h"
-#include "cppgrad/ir/access_meta.h"
+#include "cppgrad/common/access_meta.h"
 
 namespace cppgrad {
 namespace ir {
@@ -16,11 +16,11 @@ struct StorageView {
     static StorageView contiguous_from(std::shared_ptr<backend::Buffer> buf, std::vector<size_t> shape, size_t offset = 0) {
         StorageView sv;
         sv.buffer = std::move(buf);
-        sv.access_meta = AccessMeta::contiguous_from(std::move(shape), offset);
+        sv.access_meta = common::AccessMeta::contiguous_from(std::move(shape), offset);
         return sv;
     }
 
-    static StorageView from(std::shared_ptr<backend::Buffer> buf, AccessMeta access_meta) {
+    static StorageView from(std::shared_ptr<backend::Buffer> buf, common::AccessMeta access_meta) {
         StorageView sv;
         sv.buffer = std::move(buf);
         sv.access_meta = std::move(access_meta);
@@ -29,7 +29,7 @@ struct StorageView {
     }
 
     mutable std::shared_ptr<backend::Buffer> buffer;
-    AccessMeta access_meta;
+    common::AccessMeta access_meta;
 };
 
 } // namespace ir

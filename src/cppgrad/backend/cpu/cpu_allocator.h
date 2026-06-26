@@ -10,8 +10,8 @@ namespace cpu {
 
 class CPUAllocator : public Allocator {
 public:
-    std::shared_ptr<Buffer> allocate(size_t num_elements, DType dtype) override;
-    std::shared_ptr<Buffer> allocate(const void* src, size_t num_elements, DType dtype) override;
+    std::shared_ptr<Buffer> allocate(size_t num_elements, common::DType dtype) override;
+    std::shared_ptr<Buffer> allocate(const void* src, size_t num_elements, common::DType dtype) override;
     void deallocate(void* ptr) override;
 
     void copy_device_to_host(void* host_dst, const Buffer& device_src) const override;

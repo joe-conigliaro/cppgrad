@@ -211,8 +211,8 @@ void CPUBackend::matmul(const Buffer& a, const backend::View& va,
     // Mixed precision: large model weights live in memory as bfloat16 (half of fp32) while
     // activations / accumulation stay float32. The IR sets the matmul output dtype from the
     // activation (a), so a bf16 weight b with an fp32 a yields an fp32 out here.
-    const bool b_bf16 = (b.dtype() == backend::DType::BFLOAT16 &&
-                         out.dtype() == backend::DType::FLOAT32);
+    const bool b_bf16 = (b.dtype() == common::DType::BFLOAT16 &&
+                         out.dtype() == common::DType::FLOAT32);
 
     if (va.rank == 2 && vb.rank == 2 && vo.rank == 2) {
         if (b_bf16) {
@@ -294,7 +294,7 @@ void CPUBackend::gather_op(const Buffer& table, const Buffer& indices, Buffer& o
     const size_t N = indices.numel();
 
     // Mixed: bf16 weight table -> fp32 output (embedding kept in bf16 to save memory).
-    if (table.dtype() == backend::DType::BFLOAT16 && out.dtype() == backend::DType::FLOAT32) {
+    if (table.dtype() == common::DType::BFLOAT16 && out.dtype() == common::DType::FLOAT32) {
         const uint16_t* t_ptr = static_cast<const uint16_t*>(table.data());
         float* o_ptr = static_cast<float*>(out.data());
         cpu::parallel_for((size_t)0, N, [&](size_t s, size_t e) {
@@ -362,13 +362,29 @@ void CPUBackend::scatter_axis_op(const Buffer& base, const backend::View& bv,
 // Generic view copy
 
 void CPUBackend::copy_view(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) const {
+    // Dtype-converting copy (e.g. fp32 activations -> bf16 KV cache). Only fp32<->bf16 wired up.
+    if (src.dtype() != dst.dtype()) {
+        if (src.dtype() == common::DType::FLOAT32 && dst.dtype() == common::DType::BFLOAT16)
+            cpu::copy_view_convert_kernel<float, common::bfloat16>(src, vs, dst, vd);
+        else if (src.dtype() == common::DType::BFLOAT16 && dst.dtype() == common::DType::FLOAT32)
+            cpu::copy_view_convert_kernel<common::bfloat16, float>(src, vs, dst, vd);
+        else
+            throw std::runtime_error("copy_view: unsupported dtype conversion");
+        return;
+    }
     // Single fast path: dense row-major on both sides, same logical shape.
     if (vs.is_contiguous() && vd.is_contiguous() && same_shape(vs, vd)) {
-        const size_t item  = backend::size(dst.dtype());
+        const size_t item  = common::size(dst.dtype());
         const size_t bytes = vd.numel * item;
         const uint8_t* sp = static_cast<const uint8_t*>(src.data()) + (size_t)vs.offset * item;
         uint8_t*       dp = static_cast<uint8_t*>(dst.data())       + (size_t)vd.offset * item;
         if (bytes) std::memcpy(dp, sp, bytes);
+        return;
+    }
+    // Same-dtype bf16 strided copy (slice / reshape / materialize): pure bit-movement, so move it as
+    // uint16 (dispatch_dtype has no float arithmetic type for bf16, nor does it need one here).
+    if (dst.dtype() == common::DType::BFLOAT16) {
+        cpu::copy_view_kernel<uint16_t>(src, vs, dst, vd);
         return;
     }
     // Fallback: typed elementwise mapping

@@ -1,0 +1,11 @@
+# Build output
+build/
+
+# macOS
+.DS_Store
+
+# Metal GPU captures
+*.gputrace
+
+# Example run outputs
+examples/moons/*_preds.csv

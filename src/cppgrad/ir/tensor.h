@@ -13,11 +13,11 @@
 #include <unordered_map>
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/backend/buffer.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 #include "cppgrad/compat/span.h"
 #include "cppgrad/utils/ref.h"
 #include "cppgrad/ir/storage_view.h"
-#include "cppgrad/ir/access_meta.h"
+#include "cppgrad/common/access_meta.h"
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/ops.h"
 
@@ -34,23 +34,23 @@ public:
     // Factory methods
     static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
+    static utils::Ref<Tensor> make(Op op, std::vector<utils::Ref<const Tensor>> children, const common::AccessMeta& access,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
     static utils::Ref<Tensor> make_leaf(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
 
     // Properties
     const std::vector<size_t>& shape() const noexcept;
     size_t numel() const noexcept;
     backend::DeviceType device_type() const noexcept { return _device_type; }
-    backend::DType dtype() const noexcept { return _dtype; }
+    common::DType dtype() const noexcept { return _dtype; }
 
     // Access meta
-    const AccessMeta& access_meta() const noexcept;
-    void set_access_meta(AccessMeta m);
+    const common::AccessMeta& access_meta() const noexcept;
+    void set_access_meta(common::AccessMeta m);
 
     // Eval / IO
     std::shared_ptr<backend::Buffer> schedule() const;
@@ -122,13 +122,13 @@ public:
 private:
     Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const std::vector<size_t>& shape,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
-    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
+    Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const common::AccessMeta& access,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
     Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
         backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-        cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32);
+        cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32);
 
     utils::Ref<Tensor> self() {
         return utils::Ref<Tensor>(this);
@@ -154,7 +154,7 @@ private:
     Op _op;
     std::vector<utils::Ref<const Tensor>> _children;
     backend::DeviceType _device_type;
-    backend::DType _dtype;
+    common::DType _dtype;
     bool _requires_grad = false;
     mutable utils::Ref<Tensor> _grad = nullptr;
     //  0 = Heap  (always alive)
@@ -173,7 +173,7 @@ private:
 //     if (numel() != 1) {
 //         throw std::runtime_error("item(): tensor must be scalar (numel==1)");
 //     }
-//     if (backend::dtype_v<T> != this->dtype()) {
+//     if (common::dtype_v<T> != this->dtype()) {
 //         throw std::runtime_error("item(): dtype mismatch");
 //     }
 //     // const auto& buf = schedule();
@@ -187,7 +187,7 @@ private:
 template<typename T>
 T Tensor::item() const {
     if (numel() != 1) throw std::runtime_error("item(): tensor must be scalar (numel==1)");
-    if (backend::dtype_v<T> != this->dtype()) throw std::runtime_error("item(): dtype mismatch");
+    if (common::dtype_v<T> != this->dtype()) throw std::runtime_error("item(): dtype mismatch");
 
     auto dev = backend::DeviceManager::device(this->device_type());
     if (!dev) throw std::runtime_error("item(): device not found");
@@ -202,7 +202,7 @@ T Tensor::item() const {
 
 // template<typename T>
 // std::vector<T> Tensor::to_vector() const {
-//     if (backend::dtype_v<T> != this->dtype()) {
+//     if (common::dtype_v<T> != this->dtype()) {
 //         throw std::runtime_error("to_vector: dtype mismatch");
 //     }
 //     // const auto& buf = schedule();
@@ -217,7 +217,7 @@ T Tensor::item() const {
 // }
 template<typename T>
 std::vector<T> Tensor::to_vector() const {
-    if (backend::dtype_v<T> != this->dtype()) throw std::runtime_error("to_vector: dtype mismatch");
+    if (common::dtype_v<T> != this->dtype()) throw std::runtime_error("to_vector: dtype mismatch");
 
     std::vector<T> host(this->numel());
     if (this->numel() == 0) return host;
@@ -232,7 +232,7 @@ std::vector<T> Tensor::to_vector() const {
 
 template<typename T>
 cppgrad::Span<const T> Tensor::data_span() const {
-    if (backend::dtype_v<T> != this->dtype()) throw std::runtime_error("data_span: dtype mismatch");
+    if (common::dtype_v<T> != this->dtype()) throw std::runtime_error("data_span: dtype mismatch");
     // const auto& buf = schedule();
     const auto& buf = eval();
 

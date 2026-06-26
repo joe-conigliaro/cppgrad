@@ -5,7 +5,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/storage_view.h"
-#include "cppgrad/ir/access_meta.h"
+#include "cppgrad/common/access_meta.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/graph_context.h"
 #include "cppgrad/executor/interpreter/interpreter_executor.h"
@@ -42,7 +42,7 @@ std::shared_ptr<backend::Buffer> Tensor::materialize_buffer() const {
     auto dst = dev->allocator()->allocate(numel(), dtype());
 
     auto vs = backend::View::from(access_meta());
-    auto vd = backend::View::from(ir::AccessMeta::contiguous_from(shape(), 0));
+    auto vd = backend::View::from(common::AccessMeta::contiguous_from(shape(), 0));
 
     dev->backend()->copy_view(*src, vs, *dst, vd);
     return dst;
@@ -51,7 +51,7 @@ std::shared_ptr<backend::Buffer> Tensor::materialize_buffer() const {
 // Overload 1: Shape-based
 // Used by: Compute Ops (Add, Mul, MatMul) and RandomOp
 utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children,
-    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
+    const std::vector<size_t>& shape, backend::DeviceType device_type, common::DType dtype) {
     // Fast Path: Inside GraphScope -> Arena Allocation
     if (GraphContext::active()) {
         return GraphContext::instance().make_node(
@@ -73,10 +73,10 @@ utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> chi
     return utils::Ref<Tensor>(new Tensor(std::move(op), std::move(children), shape, device_type, dtype));
 }
 
-// Overload 2: AccessMeta-based
+// Overload 2: common::AccessMeta-based
 // Used by: View Ops (Reshape, Slice, Permute, Broadcast)
 utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> children,
-    const AccessMeta& access, backend::DeviceType device_type, backend::DType dtype) {
+    const common::AccessMeta& access, backend::DeviceType device_type, common::DType dtype) {
     // Fast Path: Inside GraphScope -> Arena Allocation
     if (GraphContext::active()) {
         return GraphContext::instance().make_node(std::move(op), std::move(children), access, device_type, dtype);
@@ -93,7 +93,7 @@ utils::Ref<Tensor> Tensor::make(Op op, std::vector<utils::Ref<const Tensor>> chi
 }
 
 utils::Ref<Tensor> Tensor::make_leaf(std::shared_ptr<backend::Buffer> data,
-    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype) {
+    const std::vector<size_t>& shape, backend::DeviceType device_type, common::DType dtype) {
     return utils::Ref<Tensor>(new Tensor(std::move(data), shape, device_type, dtype));
 }
 
@@ -111,16 +111,16 @@ void Tensor::check_liveness(const char* caller_name) const {
 }
 
 Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children,
-    const std::vector<size_t>& shape, backend::DeviceType device_type, backend::DType dtype)
+    const std::vector<size_t>& shape, backend::DeviceType device_type, common::DType dtype)
     : _op(std::move(op)), _children(std::move(children)), _device_type(device_type), _dtype(dtype) {
     _sv.buffer = nullptr;
-    _sv.access_meta = AccessMeta::contiguous_from(shape, 0);
+    _sv.access_meta = common::AccessMeta::contiguous_from(shape, 0);
     _generation_id = generation_id();
     compute_requires_grad();
 }
 
-Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const AccessMeta& access,
-    backend::DeviceType device_type, backend::DType dtype)
+Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const common::AccessMeta& access,
+    backend::DeviceType device_type, common::DType dtype)
     : _op(std::move(op)), _children(std::move(children)), _device_type(device_type), _dtype(dtype) {
     _sv.buffer = nullptr;
     _sv.access_meta = access;
@@ -130,7 +130,7 @@ Tensor::Tensor(Op op, std::vector<utils::Ref<const Tensor>> children, const Acce
 }
 
 Tensor::Tensor(std::shared_ptr<backend::Buffer> data, const std::vector<size_t>& shape,
-    backend::DeviceType device_type, backend::DType dtype)
+    backend::DeviceType device_type, common::DType dtype)
     : _op(LeafOp{}), _children(), _device_type(device_type), _dtype(dtype) {
     _sv = StorageView::contiguous_from(std::move(data), shape, 0);
     _generation_id = generation_id();
@@ -144,9 +144,9 @@ size_t Tensor::numel() const noexcept {
     return cppgrad::utils::vector::numel(shape());
 }
 
-const AccessMeta& Tensor::access_meta() const noexcept { return _sv.access_meta; }
+const common::AccessMeta& Tensor::access_meta() const noexcept { return _sv.access_meta; }
 
-void Tensor::set_access_meta(AccessMeta m) {
+void Tensor::set_access_meta(common::AccessMeta m) {
     _sv.access_meta = std::move(m);
     _sv.access_meta.recompute_contiguity();
 }
@@ -192,7 +192,7 @@ void Tensor::attach_buffer(std::shared_ptr<backend::Buffer> buf) const {
     if (!buf && this->numel() > 0) throw std::runtime_error("attach_buffer: null buffer for non-empty tensor");
 
     #ifdef CPPGRAD_DEBUG
-        const size_t cap_elems = buf ? (buf->size_bytes() / backend::size(this->dtype())) : 0;
+        const size_t cap_elems = buf ? (buf->size_bytes() / common::size(this->dtype())) : 0;
 
         const auto& am = this->access_meta();
 
@@ -231,7 +231,7 @@ void Tensor::set_parameter_data(const std::shared_ptr<backend::Buffer>& src) {
         throw std::runtime_error("set_parameter_data: null buffer for non-empty param");
     }
 
-    const size_t elems_src = src ? (src->size_bytes() / backend::size(this->dtype())) : 0;
+    const size_t elems_src = src ? (src->size_bytes() / common::size(this->dtype())) : 0;
     if (src && elems_src != n) {
         throw std::runtime_error("set_parameter_data: size mismatch");
     }
@@ -241,7 +241,7 @@ void Tensor::set_parameter_data(const std::shared_ptr<backend::Buffer>& src) {
 
     _sv.buffer = src;
     _op = LeafOp{};
-    _sv.access_meta = AccessMeta::contiguous_from(this->shape(), 0);
+    _sv.access_meta = common::AccessMeta::contiguous_from(this->shape(), 0);
     // Clear children to detach from the computation graph - a re-tagged leaf must not
     // keep the upstream graph alive through refcounted children references.
     _children.clear();
@@ -262,7 +262,7 @@ void Tensor::copy_into_parameter(const std::shared_ptr<backend::Buffer>& src) {
     }
 
     #ifdef CPPGRAD_DEBUG
-        const size_t expect_bytes = this->numel() * backend::size(this->dtype());
+        const size_t expect_bytes = this->numel() * common::size(this->dtype());
         if (_sv.buffer->size_bytes() != expect_bytes) {
             throw std::runtime_error("copy_into_parameter: dst buffer inconsistent with tensor metadata (debug)");
         }
@@ -275,7 +275,7 @@ void Tensor::copy_into_parameter(const std::shared_ptr<backend::Buffer>& src) {
     backend::copy(*_sv.buffer, *src);
 
     _op = LeafOp{};
-    _sv.access_meta = AccessMeta::contiguous_from(this->shape(), 0);
+    _sv.access_meta = common::AccessMeta::contiguous_from(this->shape(), 0);
     // Clear children to detach from the computation graph.
     _children.clear();
 
@@ -379,7 +379,7 @@ broadcast_grad_for_sum_backward(const utils::Ref<Tensor>& grad_this,
     g = Tensor::make(
         MovementOp{MovementOpType::BROADCAST, in_shape},
         {g},
-        AccessMeta::broadcast_from(g->access_meta(), in_shape),
+        common::AccessMeta::broadcast_from(g->access_meta(), in_shape),
         g->device_type(),
         g->dtype());
 
@@ -840,7 +840,7 @@ void Tensor::backward() {
                         auto b_out = Tensor::make(
                             MovementOp{MovementOpType::BROADCAST, x->shape()},
                             {utils::Ref<const Tensor>(node)},
-                            AccessMeta::broadcast_from(node->access_meta(),
+                            common::AccessMeta::broadcast_from(node->access_meta(),
                             x->shape()),
                             x->device_type(),
                             x->dtype());
@@ -853,7 +853,7 @@ void Tensor::backward() {
                         auto b_g = Tensor::make(
                             MovementOp{MovementOpType::BROADCAST, x->shape()},
                             {grad_this},
-                            AccessMeta::broadcast_from(grad_this->access_meta(), x->shape()),
+                            common::AccessMeta::broadcast_from(grad_this->access_meta(), x->shape()),
                             grad_this->device_type(),
                             grad_this->dtype());
                         auto g = Tensor::make(
@@ -881,7 +881,7 @@ void Tensor::backward() {
                         auto gperm = Tensor::make(
                             MovementOp{MovementOpType::PERMUTE, undo},
                             {grad_this},
-                            AccessMeta::permute_from(grad_this->access_meta(), undo),
+                            common::AccessMeta::permute_from(grad_this->access_meta(), undo),
                             x->device_type(),
                             x->dtype());
                         parent_grads = {gperm};
@@ -899,7 +899,7 @@ void Tensor::backward() {
                         auto scatter = Tensor::make(
                             slice_op,
                             {grad_this},
-                            AccessMeta::slice_from(x->access_meta(), op.slice_begin, op.slice_end, op.arg),
+                            common::AccessMeta::slice_from(x->access_meta(), op.slice_begin, op.slice_end, op.arg),
                             x->device_type(),
                             x->dtype());
                         parent_grads = {scatter};
@@ -914,7 +914,7 @@ void Tensor::backward() {
                 auto Bt = Tensor::make(
                     MovementOp{MovementOpType::PERMUTE, Xt_axes},
                     {B},
-                    AccessMeta::permute_from(B->access_meta(), Xt_axes),
+                    common::AccessMeta::permute_from(B->access_meta(), Xt_axes),
                     B->device_type(),
                     B->dtype());
                 auto dA = Tensor::make(
@@ -926,7 +926,7 @@ void Tensor::backward() {
                 auto At = Tensor::make(
                     MovementOp{MovementOpType::PERMUTE, Xt_axes},
                     {A},
-                    AccessMeta::permute_from(A->access_meta(), Xt_axes),
+                    common::AccessMeta::permute_from(A->access_meta(), Xt_axes),
                     A->device_type(),
                     A->dtype());
                 auto dB = Tensor::make(

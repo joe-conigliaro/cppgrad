@@ -32,7 +32,7 @@ static utils::Ref<ir::Tensor> block_mask(size_t S, size_t start, backend::Device
 // reading the [0, start+S) prefix back each time; compare to a reference buffer. Returns max abs diff.
 static float run_case(backend::DeviceType dev, size_t L, size_t H, size_t D, std::vector<int> block_sizes) {
     ir::NoGradScope no_grad;
-    auto cache = ir::parameter({1, L, H, D}, dev, backend::DType::FLOAT32, true);
+    auto cache = ir::parameter({1, L, H, D}, dev, common::DType::FLOAT32, true);
     cache->set_requires_grad(false);
     // zero-init the cache via an initial full write
     std::vector<float> zeros(L * H * D, 0.0f);
@@ -76,8 +76,8 @@ static float run_case(backend::DeviceType dev, size_t L, size_t H, size_t D, std
 static float run_case_attn(backend::DeviceType dev, size_t H, size_t D, std::vector<int> block_sizes) {
     ir::NoGradScope no_grad;
     size_t total = 0; for (int s : block_sizes) total += s;
-    auto kc = ir::parameter({1, total, H, D}, dev, backend::DType::FLOAT32, true); kc->set_requires_grad(false);
-    auto vc = ir::parameter({1, total, H, D}, dev, backend::DType::FLOAT32, true); vc->set_requires_grad(false);
+    auto kc = ir::parameter({1, total, H, D}, dev, common::DType::FLOAT32, true); kc->set_requires_grad(false);
+    auto vc = ir::parameter({1, total, H, D}, dev, common::DType::FLOAT32, true); vc->set_requires_grad(false);
 
     std::vector<float> khist, vhist;   // full K/V history (for the fresh-cache comparison)
     size_t pos = 0; float fill = 1.0f, worst = 0.0f;
@@ -101,8 +101,8 @@ static float run_case_attn(backend::DeviceType dev, size_t H, size_t D, std::vec
         auto inc = nn::functional::scaled_dot_product_attention(q, kf, vf, mask)->to_vector<float>();
 
         // fresh cache (write whole [0,end) history at once)
-        auto kc2 = ir::parameter({1, end, H, D}, dev, backend::DType::FLOAT32, true); kc2->set_requires_grad(false);
-        auto vc2 = ir::parameter({1, end, H, D}, dev, backend::DType::FLOAT32, true); vc2->set_requires_grad(false);
+        auto kc2 = ir::parameter({1, end, H, D}, dev, common::DType::FLOAT32, true); kc2->set_requires_grad(false);
+        auto vc2 = ir::parameter({1, end, H, D}, dev, common::DType::FLOAT32, true); vc2->set_requires_grad(false);
         auto kf2 = ir::cache_update(kc2, ir::from_vector<float>(khist, {1,end,H,D}, dev), 1, 0);
         auto vf2 = ir::cache_update(vc2, ir::from_vector<float>(vhist, {1,end,H,D}, dev), 1, 0);
         auto fresh = nn::functional::scaled_dot_product_attention(q, kf2, vf2, mask)->to_vector<float>();

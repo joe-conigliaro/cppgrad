@@ -20,6 +20,8 @@ SHELL := /bin/sh
 # ==== Platform detection ====
 ON_APPLE := $(shell uname -s | grep -q Darwin && echo true || echo false)
 HAS_XCRUN := $(shell command -v xcrun >/dev/null 2>&1 && echo true || echo false)
+# Whether the Metal shader compiler actually runs -- not just that xcrun exists.
+HAS_METAL := $(shell xcrun -sdk macosx metal --version >/dev/null 2>&1 && echo true || echo false)
 
 # ==== Compiler and flags ====
 CXX              ?= clang++
@@ -57,7 +59,7 @@ ifeq ($(ON_APPLE),true)
 	FRAMEWORKS    := -framework Metal -framework Foundation -framework MetalPerformanceShaders
 	INCLUDE_FLAGS += -I/opt/homebrew/include
 	LIBRARY_FLAGS := -L/opt/homebrew/lib -lpcre2-8
-	ifeq ($(HAS_XCRUN),true)
+	ifeq ($(HAS_METAL),true)
 		CXX_FLAGS += -DCPPGRAD_WITH_METAL
 	endif
 else
@@ -66,22 +68,29 @@ endif
 
 # ==== Source discovery ====
 LIB_CPP_SOURCES := $(shell find src -name '*.cpp' ! -path 'src/cppgrad/backend/metal/*')
-ifeq ($(ON_APPLE)$(HAS_XCRUN),truetrue)
+# The Metal backend (.mm / .metal) is built only when the Metal compiler actually works; otherwise we
+# build CPU-only (LIB_MM_SOURCES / LIB_METAL stay empty and CPPGRAD_WITH_METAL is undefined).
+ifeq ($(HAS_METAL),true)
 	LIB_MM_SOURCES := $(shell find src/cppgrad/backend/metal -name '*.mm' 2>/dev/null || true)
 	LIB_METAL      := $(shell find src/cppgrad/backend/metal -name '*.metal' 2>/dev/null || true)
 endif
 
 # ==== Source paths ====
 TEST_SRCS      := $(shell find tests -name '*.cpp' 2>/dev/null || true)
+# Heavy / checkpoint-gated tests (large-model repros, speculative/MTP that need QWEN_MODEL_DIR)
+# excluded from the default `tests` target (and CI) which runs the unit set;
 TEST_INT_SRCS  := $(filter tests/integration/%,$(TEST_SRCS))
 TEST_UNIT_SRCS := $(filter-out tests/integration/%,$(TEST_SRCS))
 EXAMPLE_SRCS   := $(wildcard examples/*.cpp) $(shell find examples -mindepth 2 -name '*.cpp' 2>/dev/null || true)
+# Standalone deliverable executables (e.g. the chat server). Unlike examples these ar build-only
+# never auto-run (they block / need a model / take arguments). Each .cpp is a binary.
 CMD_SRCS       := $(wildcard cmd/*.cpp) $(shell find cmd -mindepth 2 -name '*.cpp' 2>/dev/null || true)
 
 # ==== Output paths ====
 BUILD_DIR := build
 METAL_DIR := $(BUILD_DIR)/metal
 LIB_ARCHIVE := $(BUILD_DIR)/libcppgrad.a
+METALLIB := $(METAL_DIR)/default.metallib
 
 # Force-load static library so static initializers (device registration) run
 ifeq ($(ON_APPLE),true)
@@ -89,9 +98,6 @@ ifeq ($(ON_APPLE),true)
 else
 	FORCE_LOAD := -Wl,--whole-archive $(LIB_ARCHIVE) -Wl,--no-whole-archive
 endif
-
-METALLIB    := $(METAL_DIR)/default.metallib
-METAL_SKIP  := $(METAL_DIR)/.skip
 
 # Prevent Make from deleting .cpp.o / .mm.o (compound suffix → treated as intermediate)
 .PRECIOUS: $(BUILD_DIR)/%.cpp.o $(BUILD_DIR)/%.mm.o
@@ -111,10 +117,18 @@ CMD_BINS      := $(patsubst %,$(BUILD_DIR)/%,$(CMD_SRCS:.cpp=))
 
 # ==== Linking flags per platform ====
 LINK_PLATFORM_FLAGS := $(FRAMEWORKS)
-ifeq ($(ON_APPLE),true)
-	COPY_METALLIB = @test -f $(METALLIB) && cp $(METALLIB) "$(dir $@)" || true
+
+# ==== Metal skipped message ====
+ifeq ($(HAS_XCRUN),true)
+define SKIPPED_METAL_MSG
+@echo " Metal shader compiler missing - Metal Skipped (CPU-only build)."
+@echo " To enable the Metal (GPU) backend, install the Metal toolchain:"
+@echo "   xcodebuild -downloadComponent MetalToolchain"
+endef
 else
-	COPY_METALLIB =
+define SKIPPED_METAL_MSG
+@echo "xcrun missing - Metal Skipped (CPU-only build)"
+endef
 endif
 
 .PHONY: all tests tests-integration tests-all examples \
@@ -127,31 +141,33 @@ all: build-metal tests examples
 
 # ================================================================
 # Metal - compile .metal → .air → .metallib (once, not per binary)
+# Real file targets so make rebuilds incrementally: an .air recompiles only when its .metal changes,
+# and the metallib relinks only when an .air changes.
 # ================================================================
-build-metal:
-ifneq ($(HAS_XCRUN),true)
+LIB_AIR := $(patsubst src/cppgrad/backend/metal/%.metal,$(METAL_DIR)/%.air,$(LIB_METAL))
+
+$(METAL_DIR)/%.air: src/cppgrad/backend/metal/%.metal
 	@mkdir -p $(METAL_DIR)
-	@test -f $(METAL_SKIP) || { echo "xcrun not found - Metal skipped"; touch $(METAL_SKIP); }
+	@echo "Compiling Metal: $< -> $@"
+	xcrun -sdk macosx metal -std=metal3.1 -O3 -c $< -o $@
+
+$(METALLIB): $(LIB_AIR)
+	@echo "Linking metallib: $@"
+	xcrun -sdk macosx metallib $^ -o $@
+
+ifeq ($(HAS_METAL),true)
+build-metal: $(METALLIB)
 else
-	@mkdir -p $(METAL_DIR)
-	@rm -f $(METAL_SKIP)
-	@AIRS=; \
-	for m in $(LIB_METAL); do \
-		base="$$(basename "$$m" .metal)"; \
-		if [ ! -f "$(METAL_DIR)/$$base.air" ] || [ "$$m" -nt "$(METAL_DIR)/$$base.air" ]; then \
-			echo "Compiling Metal: $$m -> $(METAL_DIR)/$$base.air"; \
-			xcrun -sdk macosx metal -std=metal3.1 -O3 -c "$$m" -o "$(METAL_DIR)/$$base.air"; \
-		fi; \
-		AIRS="$$AIRS $(METAL_DIR)/$$base.air"; \
-	done; \
-	if [ -n "$$AIRS" ]; then \
-		echo "Linking metallib: $(METALLIB)"; \
-		xcrun -sdk macosx metallib $$AIRS -o "$(METALLIB)"; \
-	fi
+build-metal:
+	@echo "================================================================"
+	$(SKIPPED_METAL_MSG)
+	@echo "================================================================"
 endif
 
-# Force all object files to wait until Metal shader compilation is complete
-$(LIB_CPP_OBJS) $(LIB_MM_OBJS): build-metal
+# Binaries load `default.metallib` via [device newDefaultLibrary] -- i.e. from next to the executable
+# -- so each binary depends on the metallib (see LINK_RULE) and the link step copies it alongside.
+# A .metal edit thus relinks/recopies binaries but never recompiles C++ objects (they don't use it).
+METALLIB_DEP := $(if $(filter true,$(HAS_METAL)),$(METALLIB),)
 
 # ================================================================
 # Static library - compile all library sources once into .a
@@ -179,11 +195,12 @@ $(BUILD_DIR)/%.mm.o: %.mm
 # Linking - one pattern rule handles both top-level and subdirs
 # ================================================================
 define LINK_RULE
-    $(BUILD_DIR)/$(1)/%: $(BUILD_DIR)/$(1)/%.cpp.o $(LIB_ARCHIVE)
-	    @mkdir -p $$(dir $$@)
-	    $$(CXX) $$(CXX_FLAGS) $$< $$(FORCE_LOAD) $$(LINK_PLATFORM_FLAGS) $$(LIBRARY_FLAGS) -o $$@
-	    $$(COPY_METALLIB)
+$(BUILD_DIR)/$(1)/%: $(BUILD_DIR)/$(1)/%.cpp.o $(LIB_ARCHIVE) $(METALLIB_DEP)
+	@mkdir -p $$(dir $$@)
+	$$(CXX) $$(CXX_FLAGS) $$< $$(FORCE_LOAD) $$(LINK_PLATFORM_FLAGS) $$(LIBRARY_FLAGS) -o $$@
+	@if [ "$(HAS_METAL)" = "true" ] && [ -f "$(METALLIB)" ]; then cp "$(METALLIB)" "$$(dir $$@)"; fi
 endef
+
 $(eval $(call LINK_RULE,tests))
 $(eval $(call LINK_RULE,examples))
 $(eval $(call LINK_RULE,cmd))
@@ -193,14 +210,10 @@ $(eval $(call LINK_RULE,cmd))
 # ================================================================
 build-tests: $(TEST_BINS)
 
-# Heavy / checkpoint-gated tests (large-model repros, speculative/MTP that need QWEN_MODEL_DIR)
-# excluded from the default `tests` target (and CI) which runs the unit set;
 build-tests-integration: $(TEST_INT_BINS)
 
 build-examples: $(EXAMPLE_BINS)
 
-# Standalone deliverable executables (e.g. the chat server). Unlike examples these ar build-only
-# never auto-run (they block / need a model / take arguments). Each .cpp is a binary.
 build-cmds: $(CMD_BINS)
 
 build-all: build-metal build-tests build-tests-integration build-examples build-cmds
@@ -214,7 +227,7 @@ run-tests:
 		echo "======================================"; \
 		echo "Running test: $$bin"; \
 		echo "======================================"; \
-		"$$bin"; \
+		./"$$bin"; \
 	done
 
 run-tests-integration:
@@ -223,7 +236,7 @@ run-tests-integration:
 		echo "======================================"; \
 		echo "Running integration test: $$bin"; \
 		echo "======================================"; \
-		"$$bin"; \
+		./"$$bin"; \
 	done
 
 run-examples:
@@ -232,7 +245,7 @@ run-examples:
 		echo "======================================"; \
 		echo "Running example: $$bin"; \
 		echo "======================================"; \
-		"$$bin"; \
+		./"$$bin"; \
 	done
 
 # ================================================================

@@ -16,14 +16,14 @@ namespace ir {
 
 static utils::Ref<Tensor> unary(UnaryOpType op, const utils::Ref<const Tensor>& t) {
   auto out = Tensor::make(UnaryOp{op}, { t }, t->shape(), t->device_type(), t->dtype());
-  out->set_access_meta(AccessMeta::contiguous_from(out->shape()));
+  out->set_access_meta(common::AccessMeta::contiguous_from(out->shape()));
   return out;
 }
 
 static utils::Ref<Tensor> binary(BinaryOpType op, const utils::Ref<const Tensor>& a, const utils::Ref<const Tensor>& b) {
   auto out_shape = utils::shape::get_broadcast_shape(a->shape(), b->shape());
   auto out = Tensor::make(BinaryOp{op}, { a, b }, out_shape, a->device_type(), a->dtype());
-  out->set_access_meta(AccessMeta::contiguous_from(out_shape));
+  out->set_access_meta(common::AccessMeta::contiguous_from(out_shape));
   return out;
 }
 
@@ -48,7 +48,17 @@ utils::Ref<Tensor> cache_update(const utils::Ref<const Tensor>& cache,
         "cache_update: forbidden in grad mode (in-place op, no backward).");
     if (!cache->is_canonical_leaf()) throw std::runtime_error("cache_update: cache must be a canonical leaf");
     if (cache->shape().size() != values->shape().size()) throw std::runtime_error("cache_update: rank mismatch");
-    if (cache->dtype() != values->dtype()) throw std::runtime_error("cache_update: dtype mismatch");
+    // The cache may be a lower-precision store (e.g. bf16 KV cache fed by fp32 activations); the
+    // copy_view that performs the write converts src->dst dtype. Only same-kind float narrowing /
+    // identical dtypes are allowed -- a float<->int reinterpret would be a bug, not a conversion.
+    if (cache->dtype() != values->dtype()) {
+        auto is_float = [](common::DType d) {
+            return d == common::DType::FLOAT16 || d == common::DType::BFLOAT16 ||
+                   d == common::DType::FLOAT32 || d == common::DType::FLOAT64;
+        };
+        if (!is_float(cache->dtype()) || !is_float(values->dtype()))
+            throw std::runtime_error("cache_update: dtype mismatch (only float<->float conversion allowed)");
+    }
     if (cache->device_type() != values->device_type()) throw std::runtime_error("cache_update: device mismatch");
     if (cache->shape()[0] != 1) throw std::runtime_error("cache_update: requires batch dim 1 (autoregressive decode)");
     const auto& cshape = cache->shape();
@@ -59,7 +69,7 @@ utils::Ref<Tensor> cache_update(const utils::Ref<const Tensor>& cache,
     // contiguous from offset 0, so downstream reshape / repeat_kv see a dense tensor.
     std::vector<size_t> out_shape(cshape.begin(), cshape.end());
     out_shape[axis] = end;
-    auto am = AccessMeta::contiguous_from(out_shape, /*offset=*/0);
+    auto am = common::AccessMeta::contiguous_from(out_shape, /*offset=*/0);
     return Tensor::make(CacheUpdateOp{axis, start}, {cache, values}, am, cache->device_type(), cache->dtype());
 }
 
@@ -219,8 +229,8 @@ utils::Ref<Tensor> gather(const utils::Ref<const Tensor>& table, const utils::Re
     }
     // bf16 weight table -> fp32 output (dequantize on lookup): the embedding table is kept in
     // bf16 to save memory, but downstream activations are fp32.
-    auto out_dtype = (table->dtype() == backend::DType::BFLOAT16)
-                         ? backend::DType::FLOAT32 : table->dtype();
+    auto out_dtype = (table->dtype() == common::DType::BFLOAT16)
+                         ? common::DType::FLOAT32 : table->dtype();
     return Tensor::make(GatherOp{}, {table, indices}, out_shape, table->device_type(), out_dtype);
 }
 
@@ -234,7 +244,7 @@ utils::Ref<Tensor> gather_axis(const utils::Ref<const Tensor>& tensor, const uti
     std::vector<size_t> out_shape = shape;
     out_shape[ax] = n;
     auto out = Tensor::make(GatherAxisOp{ax}, {tensor, indices}, out_shape, tensor->device_type(), tensor->dtype());
-    out->set_access_meta(AccessMeta::contiguous_from(out_shape));
+    out->set_access_meta(common::AccessMeta::contiguous_from(out_shape));
     return out;
 }
 
@@ -248,7 +258,7 @@ utils::Ref<Tensor> scatter_axis(const utils::Ref<const Tensor>& base, const util
     if (values->shape()[ax] != n) throw std::runtime_error("scatter_axis: values shape mismatch at axis");
     // Output has same shape as base
     auto out = Tensor::make(ScatterOp{ax}, {base, values, indices}, shape, base->device_type(), base->dtype());
-    out->set_access_meta(AccessMeta::contiguous_from(shape));
+    out->set_access_meta(common::AccessMeta::contiguous_from(shape));
     return out;
 }
 
@@ -272,7 +282,7 @@ utils::Ref<Tensor> concat(const utils::Ref<const Tensor>& a, const utils::Ref<co
     std::vector<size_t> out_shape = as;
     out_shape[axis] = as[axis] + bs[axis];
     auto out = Tensor::make(ConcatOp{axis}, {a, b}, out_shape, a->device_type(), a->dtype());
-    out->set_access_meta(AccessMeta::contiguous_from(out_shape));
+    out->set_access_meta(common::AccessMeta::contiguous_from(out_shape));
     return out;
 }
 
@@ -280,18 +290,18 @@ utils::Ref<Tensor> concat(const utils::Ref<const Tensor>& a, const utils::Ref<co
 utils::Ref<const Tensor> contiguous(const utils::Ref<const Tensor>& t) {
     const auto& am = t->access_meta();
     if (am.contiguous && am.offset == 0) return t;
-    return Tensor::make(CopyOp{}, {t}, AccessMeta::contiguous_from(t->shape(), 0), t->device_type(), t->dtype());
+    return Tensor::make(CopyOp{}, {t}, common::AccessMeta::contiguous_from(t->shape(), 0), t->device_type(), t->dtype());
 }
 
 // Movement Ops
 utils::Ref<Tensor> reshape_view(const utils::Ref<const Tensor>& t, const std::vector<size_t>& new_shape) {
     if (utils::vector::numel(t->shape()) != utils::vector::numel(new_shape)) throw std::runtime_error("reshape_view: numel must match");
-    auto am = AccessMeta::reshape_from(t->access_meta(), new_shape);
+    auto am = common::AccessMeta::reshape_from(t->access_meta(), new_shape);
     return Tensor::make(MovementOp{MovementOpType::RESHAPE, new_shape}, {t}, am, t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> permute(const utils::Ref<const Tensor>& t, const std::vector<size_t>& axes) {
-    return Tensor::make(MovementOp{MovementOpType::PERMUTE, axes}, {t}, AccessMeta::permute_from(t->access_meta(), axes), t->device_type(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::PERMUTE, axes}, {t}, common::AccessMeta::permute_from(t->access_meta(), axes), t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, int dim0, int dim1) {
@@ -305,12 +315,12 @@ utils::Ref<Tensor> transpose(const utils::Ref<const Tensor>& t, int dim0, int di
 }
 
 utils::Ref<Tensor> broadcast(const utils::Ref<const Tensor>& t, const std::vector<size_t>& shape) {
-    return Tensor::make(MovementOp{MovementOpType::BROADCAST, shape}, {t}, AccessMeta::broadcast_from(t->access_meta(), shape), t->device_type(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::BROADCAST, shape}, {t}, common::AccessMeta::broadcast_from(t->access_meta(), shape), t->device_type(), t->dtype());
 }
 
 utils::Ref<Tensor> slice(const utils::Ref<const Tensor>& t, const std::vector<size_t>& begin, const std::vector<size_t>& end, const std::vector<size_t>& step) {
     std::vector<size_t> steps = step.empty() ? std::vector<size_t>(begin.size(), 1) : step;
-    return Tensor::make(MovementOp{MovementOpType::SLICE, steps, begin, end}, {t}, AccessMeta::slice_from(t->access_meta(), begin, end, steps), t->device_type(), t->dtype());
+    return Tensor::make(MovementOp{MovementOpType::SLICE, steps, begin, end}, {t}, common::AccessMeta::slice_from(t->access_meta(), begin, end, steps), t->device_type(), t->dtype());
 }
 
 // Composite Ops

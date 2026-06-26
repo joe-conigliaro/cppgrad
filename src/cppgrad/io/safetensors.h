@@ -14,7 +14,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/backend/device_manager.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 
 namespace cppgrad {
 namespace io {
@@ -37,29 +37,29 @@ static inline uint16_t float32_to_bf16(float v) {
 // Convert raw safetensors data to FP32 buffer, handling BF16/F16/F64/F32/INT32.
 static std::vector<float> safetensors_to_float32(
     const std::vector<uint8_t>& raw,
-    backend::DType dtype,
+    common::DType dtype,
     size_t numel)
 {
     std::vector<float> result(numel);
 
-    if (dtype == backend::DType::BFLOAT16) {
+    if (dtype == common::DType::BFLOAT16) {
         for (size_t i = 0; i < numel; ++i) {
             uint16_t b = static_cast<uint16_t>(raw[i * 2]) | (static_cast<uint16_t>(raw[i * 2 + 1]) << 8);
             result[i] = bf16_to_float32(b);
         }
     }
-    else if (dtype == backend::DType::FLOAT32) {
+    else if (dtype == common::DType::FLOAT32) {
         std::copy_n(reinterpret_cast<const float*>(raw.data()), numel, result.data());
     }
-    else if (dtype == backend::DType::FLOAT64) {
+    else if (dtype == common::DType::FLOAT64) {
         const double* d = reinterpret_cast<const double*>(raw.data());
         for (size_t i = 0; i < numel; ++i) result[i] = static_cast<float>(d[i]);
     }
-    else if (dtype == backend::DType::INT32) {
+    else if (dtype == common::DType::INT32) {
         const int32_t* d = reinterpret_cast<const int32_t*>(raw.data());
         for (size_t i = 0; i < numel; ++i) result[i] = static_cast<float>(d[i]);
     }
-    else if (dtype == backend::DType::FLOAT16) {
+    else if (dtype == common::DType::FLOAT16) {
         for (size_t i = 0; i < numel; ++i) {
             uint16_t h = static_cast<uint16_t>(raw[i * 2]) | (static_cast<uint16_t>(raw[i * 2 + 1]) << 8);
             uint32_t sign = (h >> 15) & 0x1;
@@ -88,17 +88,17 @@ static std::vector<float> safetensors_to_float32(
     return result;
 }
 
-static backend::DType safetensors_dtype(const std::string& dt) {
-    if (dt == "F32")  return backend::DType::FLOAT32;
-    if (dt == "F64")  return backend::DType::FLOAT64;
-    if (dt == "F16")  return backend::DType::FLOAT16;
-    if (dt == "BF16") return backend::DType::BFLOAT16;
-    if (dt == "I32")  return backend::DType::INT32;
-    if (dt == "I64")  return backend::DType::INT64;
-    if (dt == "I8")   return backend::DType::INT8;
-    if (dt == "U8")   return backend::DType::UINT8;
-    if (dt == "U32")  return backend::DType::UINT32;
-    if (dt == "BOOL") return backend::DType::BOOL8;
+static common::DType safetensors_dtype(const std::string& dt) {
+    if (dt == "F32")  return common::DType::FLOAT32;
+    if (dt == "F64")  return common::DType::FLOAT64;
+    if (dt == "F16")  return common::DType::FLOAT16;
+    if (dt == "BF16") return common::DType::BFLOAT16;
+    if (dt == "I32")  return common::DType::INT32;
+    if (dt == "I64")  return common::DType::INT64;
+    if (dt == "I8")   return common::DType::INT8;
+    if (dt == "U8")   return common::DType::UINT8;
+    if (dt == "U32")  return common::DType::UINT32;
+    if (dt == "BOOL") return common::DType::BOOL8;
     throw std::runtime_error("safetensors: unsupported dtype '" + dt + "'");
 }
 
@@ -191,12 +191,12 @@ inline utils::Ref<ir::Tensor> dequant_mlx_affine(
         const uint8_t* data = host.data();
         std::vector<float> result(buf.numel());
 
-        if (buf.dtype() == backend::DType::BFLOAT16) {
+        if (buf.dtype() == common::DType::BFLOAT16) {
             for (size_t i = 0; i < buf.numel(); ++i) {
                 uint16_t b = data[i * 2] | (static_cast<uint16_t>(data[i * 2 + 1]) << 8);
                 result[i] = bf16_to_float32(b);
             }
-        } else if (buf.dtype() == backend::DType::FLOAT32) {
+        } else if (buf.dtype() == common::DType::FLOAT32) {
             std::copy_n(reinterpret_cast<const float*>(data), buf.numel(), result.data());
         } else {
             throw std::runtime_error("dequant: unsupported scales dtype");
@@ -256,10 +256,10 @@ inline utils::Ref<ir::Tensor> dequant_mlx_affine(
         }
     }
 
-    auto out_buf = device->allocator()->allocate(rows * actual_cols, backend::DType::BFLOAT16);
+    auto out_buf = device->allocator()->allocate(rows * actual_cols, common::DType::BFLOAT16);
     device->allocator()->copy_host_to_device(*out_buf, dequant_bf16.data());
 
-    return ir::Tensor::make_leaf(out_buf, {rows, actual_cols}, device_type, backend::DType::BFLOAT16);
+    return ir::Tensor::make_leaf(out_buf, {rows, actual_cols}, device_type, common::DType::BFLOAT16);
 }
 
 // Forward declaration for MLX dequantization (defined below).
@@ -302,7 +302,7 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> load_safetensors(
         auto& shape_arr = info["shape"];
         auto& offsets = info["data_offsets"];
 
-        backend::DType dtype = safetensors_dtype(dtype_str);
+        common::DType dtype = safetensors_dtype(dtype_str);
 
         std::vector<size_t> shape;
         for (auto& s : shape_arr) shape.push_back(static_cast<size_t>(s));
@@ -318,16 +318,16 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> load_safetensors(
         if (!fs) throw std::runtime_error("safetensors: failed to read tensor '" + name + "'");
 
         // Convert BF16/F16/F64 to FP32; keep U32 for quantized weights
-        if (dtype == backend::DType::UINT32 && is_mlx) {
+        if (dtype == common::DType::UINT32 && is_mlx) {
             // Quantized weight - store as U32 for later dequantization
             auto buffer = device->allocator()->allocate(numel, dtype);
             device->allocator()->copy_host_to_device(*buffer, raw.data());
             tensors[name] = ir::Tensor::make_leaf(buffer, shape, device_type, dtype);
         } else {
             auto f32_data = safetensors_to_float32(raw, dtype, numel);
-            auto buffer = device->allocator()->allocate(numel, backend::DType::FLOAT32);
+            auto buffer = device->allocator()->allocate(numel, common::DType::FLOAT32);
             device->allocator()->copy_host_to_device(*buffer, f32_data.data());
-            tensors[name] = ir::Tensor::make_leaf(buffer, shape, device_type, backend::DType::FLOAT32);
+            tensors[name] = ir::Tensor::make_leaf(buffer, shape, device_type, common::DType::FLOAT32);
         }
     }
 
@@ -360,7 +360,7 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> load_safetensors(
     // Check if any U32 weights remain (quantized weights split across files)
     bool has_quantized = false;
     for (auto& [name, tensor] : all_tensors) {
-        if (tensor->dtype() == backend::DType::UINT32) {
+        if (tensor->dtype() == common::DType::UINT32) {
             has_quantized = true;
             break;
         }
@@ -383,7 +383,7 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> dequantize_mlx_tensors(
     // Find quantized weights and their corresponding scales/biases
     std::vector<std::string> quant_weight_names;
     for (auto& [name, tensor] : all_tensors) {
-        if (tensor->dtype() == backend::DType::UINT32 && string_ends_with(name, ".weight")) {
+        if (tensor->dtype() == common::DType::UINT32 && string_ends_with(name, ".weight")) {
             quant_weight_names.push_back(name);
         }
     }
@@ -399,7 +399,7 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> dequantize_mlx_tensors(
         auto b_it = all_tensors.find(bname);
 
         if (w_it != all_tensors.end() && s_it != all_tensors.end() && b_it != all_tensors.end()) {
-            if (w_it->second->dtype() == backend::DType::UINT32) {
+            if (w_it->second->dtype() == common::DType::UINT32) {
                 auto dequantized = dequant_mlx_affine(w_it->second, s_it->second, b_it->second, device_type);
                 result[wname] = dequantized;
                 continue;

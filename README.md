@@ -149,6 +149,7 @@ Set at run time (not compile time); zero cost when unset.
 - `CPPGRAD_METAL_CAPTURE=N`: capture the Nth command-buffer flush to `/tmp/cppgrad_flush.gputrace` (open in Xcode; run with `METAL_CAPTURE_ENABLED=1`).
 - `QWEN_TIMING=1`: prefill time and decode tokens/sec.
 - `QWEN_KV_CONCAT=1`: use the concat KV-cache reference path instead of the default in-place cache (cross-check).
+- `CPPGRAD_KV_DTYPE=bf16`: store the full-attention KV cache in bfloat16 (halves cache memory/bandwidth at long context and the persisted cache file; fp32-accumulate attention, so loss is bf16-rounding only). Default `f32`.
 
 See [docs/env-flags.md](docs/env-flags.md) for all env flags.
 
@@ -167,7 +168,6 @@ make run-tests            # run only
 
 # Examples
 make examples             # build + run all examples
-make examples-except-llm  # skip the heavy Qwen example
 make build-examples       # build only
 make run-examples         # run only
 

@@ -531,14 +531,14 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
 // head h/n_rep. acc[] holds ceil(Dh/32) elements per lane (Dh up to 32*FA_ACC_MAX).
 #define FA_ACC_MAX 16
 struct FlashParams { uint B, S, nH, Dh, KV, nKV, n_rep, causal, q_offset; float scale; };
-kernel void flash_attention_f32(device const float* Q [[buffer(0)]],   // [B,S,nH,Dh]
-                                device const float* K [[buffer(1)]],   // [B,KV,nKV,Dh]
-                                device const float* V [[buffer(2)]],   // [B,KV,nKV,Dh]
-                                device float*       O [[buffer(3)]],   // [B,S,nH,Dh]
-                                constant FlashParams& P [[buffer(4)]],
-                                uint3 tg  [[threadgroup_position_in_grid]],   // (h, s, b)
-                                uint3 lt  [[thread_position_in_threadgroup]],
-                                uint3 ntg [[threads_per_threadgroup]]) {
+
+// Online-softmax flash attention. Q and the accumulator are always fp32; the K/V cache element type
+// KVT is templated so a bf16 KV cache halves cache read bandwidth (KVT upconverts to float on read,
+// the dot-product and accumulation stay fp32 -- no accuracy loss vs an fp32 cache).
+template <typename KVT>
+static inline void flash_attention_impl(device const float* Q, device const KVT* K,
+                                        device const KVT* V, device float* O,
+                                        constant FlashParams& P, uint3 tg, uint3 lt, uint3 ntg) {
     uint h = tg.x, s = tg.y, b = tg.z;
     if (h >= P.nH || s >= P.S || b >= P.B) return;
     uint lane = lt.x, T = ntg.x, Dh = P.Dh;
@@ -551,23 +551,46 @@ kernel void flash_attention_f32(device const float* Q [[buffer(0)]],   // [B,S,n
     for (uint c = 0; c < FA_ACC_MAX; ++c) acc[c] = 0.0f;
 
     for (uint j = 0; j < jmax; ++j) {
-        device const float* kp = K + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        device const KVT* kp = K + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
         float part = 0.0f;
-        for (uint d = lane; d < Dh; d += T) part += qp[d] * kp[d];
+        for (uint d = lane; d < Dh; d += T) part += qp[d] * float(kp[d]);
         float sij = simd_sum(part) * P.scale;            // q·k reduced across the simdgroup
         float m_new = max(m, sij);
         float corr = exp(m - m_new);                     // m=-inf first iter -> corr=0
         float p    = exp(sij - m_new);
         l = l * corr + p;
-        device const float* vp = V + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        device const KVT* vp = V + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
         uint c = 0;
-        for (uint d = lane; d < Dh; d += T) { acc[c] = acc[c] * corr + p * vp[d]; ++c; }
+        for (uint d = lane; d < Dh; d += T) { acc[c] = acc[c] * corr + p * float(vp[d]); ++c; }
         m = m_new;
     }
     float inv = l > 0.0f ? 1.0f / l : 0.0f;
     device float* op = O + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
     uint c = 0;
     for (uint d = lane; d < Dh; d += T) { op[d] = acc[c] * inv; ++c; }
+}
+
+kernel void flash_attention_f32(device const float* Q [[buffer(0)]],   // [B,S,nH,Dh]
+                                device const float* K [[buffer(1)]],   // [B,KV,nKV,Dh]
+                                device const float* V [[buffer(2)]],   // [B,KV,nKV,Dh]
+                                device float*       O [[buffer(3)]],   // [B,S,nH,Dh]
+                                constant FlashParams& P [[buffer(4)]],
+                                uint3 tg  [[threadgroup_position_in_grid]],   // (h, s, b)
+                                uint3 lt  [[thread_position_in_threadgroup]],
+                                uint3 ntg [[threads_per_threadgroup]]) {
+    flash_attention_impl<float>(Q, K, V, O, P, tg, lt, ntg);
+}
+
+// fp32 Q x bf16 KV cache -> fp32 O.
+kernel void flash_attention_bf16kv(device const float*  Q [[buffer(0)]],
+                                   device const bfloat* K [[buffer(1)]],
+                                   device const bfloat* V [[buffer(2)]],
+                                   device float*        O [[buffer(3)]],
+                                   constant FlashParams& P [[buffer(4)]],
+                                   uint3 tg  [[threadgroup_position_in_grid]],
+                                   uint3 lt  [[thread_position_in_threadgroup]],
+                                   uint3 ntg [[threads_per_threadgroup]]) {
+    flash_attention_impl<bfloat>(Q, K, V, O, P, tg, lt, ntg);
 }
 
 // Broadcast
@@ -653,11 +676,14 @@ kernel void slice_backward_scatter_add_view_f32(device const float* grad_out [[b
 }
 
 // Copy view
+//
+// Templated on src/dst element type so the same indexing logic serves same-dtype copies and
+// dtype-converting copies (e.g. fp32 activations -> bf16 KV cache). Metal's `bfloat` upconverts on
+// read and rounds-to-nearest-even on store, so the assignment does the conversion implicitly.
 
-kernel void copy_view_f32(device float* dst [[buffer(1)]],
-                          device const float* src [[buffer(0)]],
-                          constant mslp::CopyViewParams& P [[buffer(2)]],
-                          uint gid [[thread_position_in_grid]]) {
+template <typename SrcT, typename DstT>
+static inline void copy_view_impl(device DstT* dst, device const SrcT* src,
+                                  constant mslp::CopyViewParams& P, uint gid) {
     if (gid >= P.n) return;
 
     uint ocoords[8]; coords_from_linear(gid, P.dst_v.shape, P.dst_v.rank, ocoords);
@@ -685,7 +711,38 @@ kernel void copy_view_f32(device float* dst [[buffer(1)]],
     }
 
     di = index_from_coords(ocoords, P.dst_v);
-    dst[di] = src[si];
+    dst[di] = DstT(src[si]);
+}
+
+kernel void copy_view_f32(device float* dst [[buffer(1)]],
+                          device const float* src [[buffer(0)]],
+                          constant mslp::CopyViewParams& P [[buffer(2)]],
+                          uint gid [[thread_position_in_grid]]) {
+    copy_view_impl<float, float>(dst, src, P, gid);
+}
+
+// bf16 -> bf16 (same-dtype strided copy: slice / reshape / materialize of a bf16 tensor).
+kernel void copy_view_bf16(device bfloat* dst [[buffer(1)]],
+                           device const bfloat* src [[buffer(0)]],
+                           constant mslp::CopyViewParams& P [[buffer(2)]],
+                           uint gid [[thread_position_in_grid]]) {
+    copy_view_impl<bfloat, bfloat>(dst, src, P, gid);
+}
+
+// fp32 src -> bf16 dst (the converting write into a bf16 KV cache).
+kernel void copy_view_f32_to_bf16(device bfloat* dst [[buffer(1)]],
+                                  device const float* src [[buffer(0)]],
+                                  constant mslp::CopyViewParams& P [[buffer(2)]],
+                                  uint gid [[thread_position_in_grid]]) {
+    copy_view_impl<float, bfloat>(dst, src, P, gid);
+}
+
+// bf16 src -> fp32 dst (e.g. reading a bf16 cache prefix back out as fp32).
+kernel void copy_view_bf16_to_f32(device float* dst [[buffer(1)]],
+                                  device const bfloat* src [[buffer(0)]],
+                                  constant mslp::CopyViewParams& P [[buffer(2)]],
+                                  uint gid [[thread_position_in_grid]]) {
+    copy_view_impl<bfloat, float>(dst, src, P, gid);
 }
 
 // Reduce (fast: last axis)

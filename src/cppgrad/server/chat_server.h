@@ -223,6 +223,21 @@ public:
             spec_session_.capacity = session_.capacity_hint;   // preallocate speculative caches too
             printf("[ChatServer] prefix-cache KV capacity hint = %zu tokens\n", session_.capacity_hint);
         }
+        // Cross-restart prefix cache: persist the warm prompt-prefix cache to disk so the (expensive)
+        // first prefill of a fixed system+tools prompt is paid once on a machine, ever -- a restart
+        // reloads it. Set CPPGRAD_KV_CACHE_FILE=/path. Loaded here (after the capacity hint); saved
+        // after the first request below.
+        if (const char* f = std::getenv("CPPGRAD_KV_CACHE_FILE")) {
+            kv_cache_file_ = f;
+            if (nn::llm::load_prefix_cache(*model_, session_, kv_cache_file_)) {
+                kv_cache_saved_ = true;   // already warm; no need to re-save it
+                printf("[ChatServer] prefix cache restored from %s (%zu tokens)\n",
+                       kv_cache_file_.c_str(), session_.tokens.size());
+            } else {
+                printf("[ChatServer] prefix cache file %s not usable yet (will save after first request)\n",
+                       kv_cache_file_.c_str());
+            }
+        }
         // Auto-enable MTP self-speculation if the checkpoint ships an MTP module (no draft model needed).
         if (model_->has_mtp()) {
             mtp_enabled_ = true;
@@ -441,6 +456,15 @@ private:
             [&](int32_t id) { return cb(id); }, stop, sampling);
         std::fprintf(stderr, "[prefix-cache] reused %zu / %zu prompt tokens (prefilled %zu)\n",
                      session_.reused, prompt_ids.size(), session_.prefilled);
+        // Persist the warm cache once per run (the first request pays the cold prefill; capturing it
+        // means restarts reload it). Saving every request would re-write the whole KV each turn.
+        if (!kv_cache_file_.empty() && !kv_cache_saved_ && !session_.tokens.empty()) {
+            if (nn::llm::save_prefix_cache(*model_, session_, kv_cache_file_)) {
+                kv_cache_saved_ = true;
+                std::fprintf(stderr, "[prefix-cache] saved warm cache (%zu tokens) to %s\n",
+                             session_.tokens.size(), kv_cache_file_.c_str());
+            }
+        }
         return gen;
     }
 
@@ -450,6 +474,8 @@ private:
     // size on demand, which loses reuse when the conversation outgrows the last allocation).
     nn::llm::PrefixCacheSession session_;       // plain decode path
     Qwen3Model::SpecCacheState  spec_session_;  // speculative / MTP decode path
+    std::string kv_cache_file_;                 // CPPGRAD_KV_CACHE_FILE: persist the warm cache to disk
+    bool        kv_cache_saved_ = false;        // saved this run? (save once; reload on restart)
 
     std::unique_ptr<Qwen3Model> model_;
     std::unique_ptr<Qwen3Model> draft_model_;   // optional draft for speculative decoding

@@ -103,7 +103,7 @@ public:
                            Buffer &out, const backend::View &out_view, int axis) const = 0;
     
     // Movement ops (reshape/permute/broadcast/slice) are zero-copy: they produce a strided
-    // backend::View that downstream ops consume directly (see ir/access_meta.h + the executor's
+    // backend::View that downstream ops consume directly (see common/access_meta.h + the executor's
     // MovementOp aliasing). The only materialization is copy_view below (for ir::contiguous()).
 
     // Generic (materialize a view mapping)

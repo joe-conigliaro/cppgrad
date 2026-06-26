@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "cppgrad/backend/cpu/thread_runtime.h"
+#include "cppgrad/common/bfloat16.h"
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/utils/shape.h"
 #include "cppgrad/backend/view.h"
@@ -314,6 +315,12 @@ inline void broadcast_kernel_fast(const Buffer& a, Buffer& out,
 }
 
 // Direct View helpers
+//
+// These take std::vector<size_t> coords (heap-backed, indirected on every element access). Since
+// backend::View already caps rank at kMaxRank, a future optimization is to take fixed-size stack
+// arrays (uint32_t coords[kMaxRank]) instead -- as the Metal kernels already do -- avoiding the heap
+// indirection in the per-element loops of the view kernels. Cold path today (CPU is not the inference
+// backend), so not worth a blanket sweep; do it per-kernel if CPU view perf ever shows up in a profile.
 
 inline size_t index_from_coords(const backend::View& v, const std::vector<size_t>& coords) {
     size_t idx = v.offset;
@@ -944,20 +951,27 @@ inline void copy_view_kernel(const Buffer& src, const backend::View& vs, Buffer&
         const size_t di = index_from_coords(vd, ocoords);
         dp[di] = sp[si];
     }
-    // TODO: fixed array helpers.
-    // // Fixed-size coordinate buffers (rank <= kMaxRank)
-    // uint32_t ocoords[backend::kMaxRank];
-    // uint32_t icoords[backend::kMaxRank];
+}
 
-    // for (size_t lin = 0; lin < nout; ++lin) {
-    //     coords_from_linear_fixed(lin, vd, ocoords); // out coords
-    //     map_out_to_in_coords_broadcast_fixed(ocoords, vd, vs, icoords); // in coords (broadcast-aware)
+// Dtype-converting copy_view: src element type SrcT, dst element type DstT (e.g. fp32 -> bf16 for a
+// bf16 KV cache write). Same indexing as copy_view_kernel; the assignment goes through the element
+// types' conversions (DstT must be constructible from SrcT).
+template<typename SrcT, typename DstT>
+inline void copy_view_convert_kernel(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) {
+    const SrcT* sp = static_cast<const SrcT*>(src.data());
+    DstT*       dp = static_cast<DstT*>(dst.data());
+    const size_t nout = vd.numel;
+    if (!nout) return;
 
-    //     const size_t si = index_from_coords_fixed(vs, icoords);
-    //     const size_t di = index_from_coords_fixed(vd, ocoords);
-
-    //     dp[di] = sp[si];
-    // }
+    std::vector<size_t> ocoords, icoords;
+    std::vector<uint32_t> out_shape(vd.shape, vd.shape + vd.rank);
+    for (size_t lin=0; lin<nout; ++lin) {
+        coords_from_linear(lin, out_shape, ocoords);
+        map_out_to_in_coords_broadcast(ocoords, vs, icoords);
+        const size_t si = index_from_coords(vs, icoords);
+        const size_t di = index_from_coords(vd, ocoords);
+        dp[di] = DstT(static_cast<float>(sp[si]));
+    }
 }
 
 // Concat: copy each input's elements to the correct position in output along axis

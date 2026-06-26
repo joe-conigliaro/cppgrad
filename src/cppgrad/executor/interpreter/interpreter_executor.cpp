@@ -13,7 +13,7 @@
 #include "cppgrad/ir/graph_context.h"
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/backend/copy.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 #include "cppgrad/utils/profiler.h"
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/backend/backend.h"
@@ -169,7 +169,7 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     // Don't use t->access_meta() here as it may represent a view with non-zero offset/strides,
                     // which would make kernels write out-of-bounds into out_buf.
                     // Realized outputs must use an identity (row-major dense, offset=0) view.
-                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
+                    auto vo = backend::View::from(common::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
                     out_device->backend()->matmul(*parents[0], va, *parents[1], vb, *out_buf, vo);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::FlashAttentionOp>) {
@@ -207,7 +207,7 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                         // src -> tmp src (identity)
                         auto* src_device = backend::DeviceManager::device(src_buf->device_type());
                         auto tmp_src = src_device->allocator()->allocate(t->numel(), t->dtype());
-                        const auto vid = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
+                        const auto vid = backend::View::from(common::AccessMeta::contiguous_from(t->shape(), 0));
                         src_device->backend()->copy_view(*src_buf, vs, *tmp_src, vid);
 
                         // tmp src (identity) -> tmp dst (identity)
@@ -239,7 +239,7 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     const size_t S = val_t->shape()[op.axis];
                     begin[op.axis] = op.start;
                     end[op.axis]   = op.start + S;
-                    auto write_am = cppgrad::ir::AccessMeta::slice_from(
+                    auto write_am = cppgrad::common::AccessMeta::slice_from(
                         cache_t->access_meta(), begin, end,
                         std::vector<size_t>(cache_t->shape().size(), 1));
                     auto vdst = backend::View::from(write_am);
@@ -276,20 +276,20 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                         input_bufs.push_back(parents[i].get());
                         input_views.push_back(backend::View::from(t->children()[i]->access_meta()));
                     }
-                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
+                    auto vo = backend::View::from(common::AccessMeta::contiguous_from(t->shape(), /*offset=*/0));
                     out_device->backend()->concat_op(input_bufs, input_views, *out_buf, vo, op.axis);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::GatherAxisOp>) {
                     out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                     auto tv = backend::View::from(t->children()[0]->access_meta());
-                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
+                    auto vo = backend::View::from(common::AccessMeta::contiguous_from(t->shape(), 0));
                     out_device->backend()->gather_axis_op(*parents[0], tv, *parents[1], *out_buf, vo, op.axis);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::ScatterOp>) {
                     out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                     auto bv = backend::View::from(t->children()[0]->access_meta());
                     auto vv = backend::View::from(t->children()[1]->access_meta());
-                    auto vo = backend::View::from(ir::AccessMeta::contiguous_from(t->shape(), 0));
+                    auto vo = backend::View::from(common::AccessMeta::contiguous_from(t->shape(), 0));
                     out_device->backend()->scatter_axis_op(*parents[0], bv, *parents[1], vv, *parents[2], *out_buf, vo, op.axis);
                 }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::MovementOp>) {
@@ -318,9 +318,9 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
             if (profile_on) {
                 // Memory traffic moved by this op = output + all inputs (the cost proxy in a
                 // bandwidth-bound regime). Time is left to region scopes / backend GPU hooks.
-                uint64_t bytes = (uint64_t)t->numel() * backend::size(t->dtype());
+                uint64_t bytes = (uint64_t)t->numel() * common::size(t->dtype());
                 for (const auto& c : t->children())
-                    if (c) bytes += (uint64_t)c->numel() * backend::size(c->dtype());
+                    if (c) bytes += (uint64_t)c->numel() * common::size(c->dtype());
                 cppgrad::utils::Profiler::instance().record(cppgrad::ir::to_string(t->op()), 0.0, bytes);
             }
         }

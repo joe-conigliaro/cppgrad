@@ -7,7 +7,7 @@
 #include <type_traits>
 
 namespace cppgrad {
-namespace backend {
+namespace common {
 
 enum class DType {
     INT8,
@@ -56,12 +56,26 @@ inline constexpr size_t size(DType dtype) {
     }
 }
 
-inline DType promote(backend::DType dt1, backend::DType dt2) {
-    // TODO: (currently unused).
-    if (dt1 == backend::DType::FLOAT32 || dt2 == backend::DType::FLOAT32) {
-        return backend::DType::FLOAT32;
+// Type-promotion rank: float kinds outrank ints; wider/higher-precision wins. Used to pick the
+// result dtype of a mixed-dtype op (e.g. fp32 activations x bf16 weights -> fp32).
+inline constexpr int promote_rank(DType d) {
+    switch (d) {
+        case DType::FLOAT64:  return 6;
+        case DType::FLOAT32:  return 5;
+        case DType::FLOAT16:  return 4;
+        case DType::BFLOAT16: return 4;  // same width as fp16; fp32 still wins over both
+        case DType::INT64:    return 3;
+        case DType::UINT32:
+        case DType::INT32:    return 2;
+        case DType::UINT8:
+        case DType::INT8:     return 1;
+        default:              return 0;
     }
-    return dt1;
+}
+
+inline DType promote(DType dt1, DType dt2) {
+    if (dt1 == dt2) return dt1;
+    return promote_rank(dt1) >= promote_rank(dt2) ? dt1 : dt2;
 }
 
 // Compile-time mapping.
@@ -84,5 +98,5 @@ constexpr DType dtype_of() {
 template<typename T>
 constexpr DType dtype_v = dtype_of<T>();
 
-} // namespace backend
+} // namespace common
 } // namespace cppgrad

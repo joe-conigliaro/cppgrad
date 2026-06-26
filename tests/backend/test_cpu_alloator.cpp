@@ -6,7 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include "cppgrad/backend/device_manager.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "tests/helpers.h"

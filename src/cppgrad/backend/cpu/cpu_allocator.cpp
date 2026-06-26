@@ -9,7 +9,7 @@ namespace cppgrad {
 namespace backend {
 namespace cpu {
 
-std::shared_ptr<Buffer> CPUAllocator::allocate(size_t num_elements, DType dtype) {
+std::shared_ptr<Buffer> CPUAllocator::allocate(size_t num_elements, common::DType dtype) {
     size_t bytes = num_elements * size(dtype);
     if (bytes == 0) {
         return std::make_shared<Buffer>(nullptr, 0, dtype, DeviceType::CPU, this);
@@ -18,7 +18,7 @@ std::shared_ptr<Buffer> CPUAllocator::allocate(size_t num_elements, DType dtype)
     return std::make_shared<Buffer>(ptr, bytes, dtype, DeviceType::CPU, this);
 }
 
-std::shared_ptr<Buffer> CPUAllocator::allocate(const void* src, size_t num_elements, DType dtype) {
+std::shared_ptr<Buffer> CPUAllocator::allocate(const void* src, size_t num_elements, common::DType dtype) {
     auto buffer = allocate(num_elements, dtype);
     if (src && buffer->data()) {
         std::memcpy(buffer->data(), src, buffer->size_bytes());

@@ -21,6 +21,7 @@
 #include "cppgrad/nn/functional.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
+#include "cppgrad/common/bfloat16.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/parameter.h"
 #include "cppgrad/ir/grad_mode.h"
@@ -138,7 +139,7 @@ public:
 
         int32_t H = config.hidden_size;
         int32_t V = config.vocab_size;
-        const auto F32 = backend::DType::FLOAT32;
+        const auto F32 = common::DType::FLOAT32;
 
         // Embedding
         embedding_weight = ir::parameter({(size_t)V, (size_t)H}, device_type, F32, !lazy_weights);
@@ -178,17 +179,32 @@ public:
     // In-place mode preallocates a fixed [1, max_len, n_kv, head_dim] K/V leaf per
     // full-attention layer (written in place each step, O(1) append); concat mode
     // leaves caches null (filled by a growing concat on the first step).
+    // KV-cache element dtype, selected by CPPGRAD_KV_DTYPE (bf16|f32). Read once per process.
+    static common::DType kv_cache_dtype() {
+        static const common::DType dt = [] {
+            const char* s = std::getenv("CPPGRAD_KV_DTYPE");
+            if (s && (std::string(s) == "bf16" || std::string(s) == "bfloat16"))
+                return common::DType::BFLOAT16;
+            return common::DType::FLOAT32;
+        }();
+        return dt;
+    }
+
     std::vector<LayerCache> alloc_kv_caches(size_t prompt_len, int32_t max_new_tokens) {
         std::vector<LayerCache> caches(_blocks.size());
         if (!inplace_kv) return caches;
         const size_t max_len = prompt_len + (size_t)max_new_tokens;
         const size_t nKV = (size_t)_config.num_key_value_heads;
         const size_t Dh  = (size_t)_config.head_dim;
+        // KV-cache dtype: bf16 (CPPGRAD_KV_DTYPE=bf16) halves cache memory + read bandwidth at long
+        // context and the persisted cache file, with fp32-accumulate attention so no accuracy loss.
+        // The fp32 K/V activations are converted on the cache_update write. Default fp32 for now.
+        const common::DType kv_dtype = kv_cache_dtype();
         auto* cap_dev = std::getenv("CPPGRAD_METAL_CAPTURE") ? backend::DeviceManager::device(_device_type) : nullptr;
         for (size_t i = 0; i < _blocks.size(); ++i) {
             if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
-                caches[i].k = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
-                caches[i].v = ir::parameter({1, max_len, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+                caches[i].k = ir::parameter({1, max_len, nKV, Dh}, _device_type, kv_dtype, true);
+                caches[i].v = ir::parameter({1, max_len, nKV, Dh}, _device_type, kv_dtype, true);
                 caches[i].k->set_requires_grad(false);
                 caches[i].v->set_requires_grad(false);
                 if (cap_dev) {  // label so the cache is searchable in a GPU capture
@@ -234,6 +250,107 @@ public:
     }
 
     int32_t default_eos() const override { return _config.is_qwen3_5() ? 248044 : 151645; }
+
+    // --- Cache persistence (cross-restart prefix caching). Format per tensor: present-flag, rank,
+    // dims, then numel fp32. Full-attn layers store the [0:valid_len] K/V prefix; linear layers store
+    // the recurrent + conv state. read_cache writes the K/V back into freshly preallocated leaves. ---
+    uint64_t cache_tag() const override {
+        uint64_t h = 1469598103934665603ULL;                       // FNV-1a over the config
+        auto mix = [&](uint64_t v) { h = (h ^ v) * 1099511628211ULL; };
+        mix((uint64_t)_config.hidden_size);      mix((uint64_t)_config.num_hidden_layers);
+        mix((uint64_t)_config.num_attention_heads); mix((uint64_t)_config.num_key_value_heads);
+        mix((uint64_t)_config.head_dim);         mix((uint64_t)_config.vocab_size);
+        mix((uint64_t)_config.intermediate_size);
+        for (auto t : _config.layer_types) mix((uint64_t)t);
+        return h;
+    }
+
+    void write_cache(const cppgrad::nn::llm::ModelCache& cache, size_t valid_len,
+                     std::ostream& os) const override {
+        auto& c = static_cast<const Cache&>(cache);
+        for (size_t i = 0; i < _blocks.size(); ++i) {
+            const auto& lc = c.layers[i];
+            if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
+                write_kv_prefix(os, lc.k, valid_len);
+                write_kv_prefix(os, lc.v, valid_len);
+            } else {
+                write_tensor(os, lc.state);
+                write_tensor(os, lc.conv);
+            }
+        }
+    }
+
+    std::unique_ptr<cppgrad::nn::llm::ModelCache> read_cache(std::istream& is, size_t /*valid_len*/,
+                                                            size_t capacity) override {
+        ir::NoGradScope no_grad;
+        auto c = std::make_unique<Cache>();
+        c->layers = alloc_kv_caches(capacity, 0);   // preallocated K/V leaves (full-attn); linear null
+        for (size_t i = 0; i < _blocks.size(); ++i) {
+            auto& lc = c->layers[i];
+            if (_blocks[i]->get_layer_type() == LayerType::FULL_ATTENTION) {
+                auto k = read_tensor(is), v = read_tensor(is);     // [1, valid_len, nKV, Dh]
+                if (k) ir::cache_update(lc.k, k, 1, 0)->eval();     // commit into the leaf at [0:valid_len]
+                if (v) ir::cache_update(lc.v, v, 1, 0)->eval();
+            } else {
+                lc.state = read_tensor(is);
+                lc.conv  = read_tensor(is);
+            }
+        }
+        if (auto* dev = backend::DeviceManager::device(_device_type)) dev->backend()->flush_pending();
+        return c;
+    }
+
+private:
+    // Stable on-disk dtype tags (independent of common::DType enum ordering).
+    enum : uint8_t { kTagF32 = 0, kTagBF16 = 1 };
+
+    void write_tensor(std::ostream& os, const utils::Ref<ir::Tensor>& t) const {
+        uint8_t present = t ? 1 : 0;
+        os.write(reinterpret_cast<const char*>(&present), 1);
+        if (!t) return;
+        const auto& shp = t->shape();
+        uint32_t rank = (uint32_t)shp.size();
+        os.write(reinterpret_cast<const char*>(&rank), sizeof rank);
+        for (auto d : shp) { uint32_t dd = (uint32_t)d; os.write(reinterpret_cast<const char*>(&dd), sizeof dd); }
+        // Persist in the tensor's own dtype (a bf16 cache -> a half-size bf16 file), tagged so the
+        // reader rebuilds the right element type.
+        if (t->dtype() == common::DType::BFLOAT16) {
+            uint8_t tag = kTagBF16; os.write(reinterpret_cast<const char*>(&tag), 1);
+            auto data = t->to_vector<common::bfloat16>();
+            os.write(reinterpret_cast<const char*>(data.data()), (std::streamsize)(data.size() * sizeof(common::bfloat16)));
+        } else {
+            uint8_t tag = kTagF32; os.write(reinterpret_cast<const char*>(&tag), 1);
+            auto data = t->to_vector<float>();
+            os.write(reinterpret_cast<const char*>(data.data()), (std::streamsize)(data.size() * sizeof(float)));
+        }
+    }
+    // Write the [0:valid_len] prefix of a [1, capacity, nKV, Dh] cache leaf.
+    void write_kv_prefix(std::ostream& os, const utils::Ref<ir::Tensor>& t, size_t valid_len) const {
+        if (!t) { uint8_t z = 0; os.write(reinterpret_cast<const char*>(&z), 1); return; }
+        const auto& s = t->shape();
+        auto pref = ir::slice(t, {0, 0, 0, 0}, {s[0], valid_len, s[2], s[3]}, {1, 1, 1, 1});
+        write_tensor(os, ir::reshape(pref, {s[0], valid_len, s[2], s[3]}));  // make contiguous
+    }
+    utils::Ref<ir::Tensor> read_tensor(std::istream& is) const {
+        uint8_t present = 0; is.read(reinterpret_cast<char*>(&present), 1);
+        if (!present || !is) return nullptr;
+        uint32_t rank = 0; is.read(reinterpret_cast<char*>(&rank), sizeof rank);
+        std::vector<size_t> shp(rank); size_t numel = 1;
+        for (uint32_t i = 0; i < rank; ++i) { uint32_t d = 0; is.read(reinterpret_cast<char*>(&d), sizeof d); shp[i] = d; numel *= d; }
+        uint8_t tag = kTagF32; is.read(reinterpret_cast<char*>(&tag), 1);
+        if (!is) return nullptr;
+        if (tag == kTagBF16) {
+            std::vector<common::bfloat16> data(numel);
+            is.read(reinterpret_cast<char*>(data.data()), (std::streamsize)(numel * sizeof(common::bfloat16)));
+            if (!is) return nullptr;
+            return ir::from_vector<common::bfloat16>(data, shp, _device_type);
+        }
+        std::vector<float> data(numel);
+        is.read(reinterpret_cast<char*>(data.data()), (std::streamsize)(numel * sizeof(float)));
+        if (!is) return nullptr;
+        return ir::from_vector<float>(data, shp, _device_type);
+    }
+public:
 
     // Forward pass: input_ids [B, S] -> logits [B, S, vocab_size]. Non-cached (full recompute);
     // builds a causal mask so full-attention layers are correctly causal.
@@ -454,7 +571,7 @@ public:
         auto deq = [&](const std::string& base) -> utils::Ref<ir::Tensor> {
             auto w = find(base + ".weight"), s = find(base + ".scales"), b = find(base + ".biases");
             if (!w) { std::cerr << "[Qwen3Model] WARNING: missing " << base << ".weight\n"; return w; }
-            if (s && b && w->dtype() == backend::DType::UINT32)
+            if (s && b && w->dtype() == common::DType::UINT32)
                 return io::dequant_mlx_affine(w, s, b, _device_type);
             return w;
         };
@@ -868,8 +985,8 @@ public:
         std::vector<LayerCache> mc(1);
         const size_t maxlen = prompt_len + (size_t)max_new_tokens;
         const size_t nKV = (size_t)_config.num_key_value_heads, Dh = (size_t)_config.head_dim;
-        mc[0].k = ir::parameter({1, maxlen, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
-        mc[0].v = ir::parameter({1, maxlen, nKV, Dh}, _device_type, backend::DType::FLOAT32, true);
+        mc[0].k = ir::parameter({1, maxlen, nKV, Dh}, _device_type, common::DType::FLOAT32, true);
+        mc[0].v = ir::parameter({1, maxlen, nKV, Dh}, _device_type, common::DType::FLOAT32, true);
         mc[0].k->set_requires_grad(false);
         mc[0].v->set_requires_grad(false);
         return mc;

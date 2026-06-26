@@ -3,7 +3,7 @@
 #pragma once
 
 #include <memory>
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 
 namespace cppgrad {
 namespace backend {
@@ -14,8 +14,8 @@ class Allocator {
 public:
     virtual ~Allocator() = default;
 
-    virtual std::shared_ptr<Buffer> allocate(size_t num_elements, DType dtype) = 0;
-    virtual std::shared_ptr<Buffer> allocate(const void* src, size_t num_elements, DType dtype) = 0;
+    virtual std::shared_ptr<Buffer> allocate(size_t num_elements, common::DType dtype) = 0;
+    virtual std::shared_ptr<Buffer> allocate(const void* src, size_t num_elements, common::DType dtype) = 0;
     virtual void deallocate(void* ptr) = 0;
 
     virtual void copy_device_to_host(void* host_dst, const Buffer& device_src) const = 0;

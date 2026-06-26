@@ -89,8 +89,8 @@ public:
             // Deferred (unallocated) storage, no random init: weights arrive from a checkpoint.
             // The dense weight is created so the dense-load path can rebind it; a quantized load
             // instead fills qweight/scales/biases and flips `quantized`, leaving this unrealized.
-            weight = ir::parameter({in_features, out_features}, device_type, backend::DType::FLOAT32, false);
-            if (use_bias) bias = ir::parameter({1, out_features}, device_type, backend::DType::FLOAT32, false);
+            weight = ir::parameter({in_features, out_features}, device_type, common::DType::FLOAT32, false);
+            if (use_bias) bias = ir::parameter({1, out_features}, device_type, common::DType::FLOAT32, false);
         } else {
             auto [w_min, w_max, use_uniform, stddev] =
                 detail::limits_for_init(init, in_features, out_features);

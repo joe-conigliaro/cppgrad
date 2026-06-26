@@ -9,7 +9,7 @@
 #include "cppgrad/utils/ref.h"
 
 // Forward declarations.
-namespace cppgrad { namespace ir { class Tensor; class AccessMeta; } }
+namespace cppgrad { namespace ir { class Tensor; } namespace common { struct AccessMeta; } }
 
 namespace cppgrad {
 // Forward declaration.

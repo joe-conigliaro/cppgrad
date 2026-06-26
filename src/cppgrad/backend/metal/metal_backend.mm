@@ -3,7 +3,7 @@
 #import <Metal/Metal.h>
 #include "cppgrad/backend/metal/metal_backend.h"
 #include "cppgrad/backend/buffer.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 #include "cppgrad/backend/metal/metal_execution_context.h"
 #include "cppgrad/backend/metal/metal_kernel_cache.h"
 #include "cppgrad/backend/metal/metal_shared_structs.h"
@@ -118,7 +118,7 @@ void sync_copy(Buffer &dst, const Buffer &src) const {
 void submit_fill(Buffer &buf, double value) const {
     if (buf.size_bytes() == 0)
         return;
-    if (buf.dtype() != backend::DType::FLOAT32) {
+    if (buf.dtype() != common::DType::FLOAT32) {
         throw std::runtime_error(
         std::string("MetalBackend::submit_fill: unsupported dtype ") +
         to_string(buf.dtype()));
@@ -296,7 +296,7 @@ const backend::View &vo) const {
     const bool nn_layout = fast_packed && vb.is_rowmaj_nn_2d();
     const bool tn_layout = fast_packed && vb.is_rowmaj_tn_2d();
     // bf16 weights use the generic naive kernel (the tiled kernels are fp32-only).
-    const bool b_bf16 = (b.dtype() == backend::DType::BFLOAT16);
+    const bool b_bf16 = (b.dtype() == common::DType::BFLOAT16);
 
     ComputeWork work;
     work.buffers.push_back({as_mtl(a), 0});
@@ -328,10 +328,27 @@ const backend::View &vd) const {
     if (dst.size_bytes() == 0)
         return;
 
-    // Fast path: identity mapping => synchronous blit.
-    if (vs.is_identity() && vd.is_identity() && same_shape(vs, vd)) {
+    // A dtype-converting copy (e.g. fp32 activations -> bf16 KV cache) needs the elementwise
+    // kernel; a raw byte blit would reinterpret the bits. Only same-dtype copies may take the blit.
+    const bool convert = (src.dtype() != dst.dtype());
+
+    // Fast path: identity mapping => synchronous blit (same-dtype only).
+    if (!convert && vs.is_identity() && vd.is_identity() && same_shape(vs, vd)) {
         sync_copy(dst, src);
         return;
+    }
+
+    // Pick the (src,dst) dtype-specialized kernel. Only fp32<->bf16 conversion is wired up so far.
+    const char* kernel_name = "copy_view_f32";
+    if (convert) {
+        if (src.dtype() == common::DType::FLOAT32 && dst.dtype() == common::DType::BFLOAT16)
+            kernel_name = "copy_view_f32_to_bf16";
+        else if (src.dtype() == common::DType::BFLOAT16 && dst.dtype() == common::DType::FLOAT32)
+            kernel_name = "copy_view_bf16_to_f32";
+        else
+            throw std::runtime_error("copy_view: unsupported dtype conversion");
+    } else if (dst.dtype() == common::DType::BFLOAT16) {
+        kernel_name = "copy_view_bf16";   // same-dtype bf16 strided copy (slice/reshape/materialize)
     }
 
     CopyViewParams P{};
@@ -344,7 +361,7 @@ const backend::View &vd) const {
     P.n = (unsigned int)vd.numel;
 
     ComputeWork work;
-    work.pso = cache->get("copy_view_f32");
+    work.pso = cache->get(kernel_name);
     work.buffers.push_back({as_mtl(src), 0});
     work.buffers.push_back({as_mtl(dst), 0});
     work.add_bytes(2, &P, sizeof(P));
@@ -408,9 +425,10 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
     }
 
     // Prefill / general path (M > 1): register-blocked, threadgroup-memory-tiled GEMM
-    // (matmul_quant_gemm_tiled_f32) -- 64x64 output tile, 256 threads x 4x4 micro-tile, weight tile
-    // dequantized ONCE into shared memory and reused across all 64 rows (full batch reuse + high
-    // occupancy).
+    // (matmul_quant_gemm_tiled_f32) -- 64x64 tile, 256 threads x 4x4 micro-tile, weight tile
+    // dequantized ONCE into shared memory and reused across all 64 rows. (A simdgroup_matrix variant
+    // was tried and dropped: the 8-bit GEMM is dequant/memory-access bound, not matmul-bound, so the
+    // hardware matrix units gave no speedup, and a half-precision path lost too much accuracy.)
     constexpr uint32_t QT_BM = 64, QT_BN = 64;  // must match #defines in the .metal kernel
     uint32_t m = (uint32_t)M;
     work.pso = cache->get("matmul_quant_gemm_tiled_f32");
@@ -436,8 +454,10 @@ void submit_flash_attention(const Buffer &q, const Buffer &k, const Buffer &v, B
     FlashParams P;
     P.B=(uint)B; P.S=(uint)S; P.nH=(uint)nH; P.Dh=(uint)Dh; P.KV=(uint)KV; P.nKV=(uint)nKV;
     P.n_rep=(uint)n_rep; P.causal=causal?1u:0u; P.q_offset=(uint)q_offset; P.scale=scale;
+    // bf16 KV cache uses the bf16-read variant (fp32 accumulate); fp32 cache uses the f32 kernel.
+    const bool kv_bf16 = (k.dtype() == common::DType::BFLOAT16);
     ComputeWork work;
-    work.pso = cache->get("flash_attention_f32");
+    work.pso = cache->get(kv_bf16 ? "flash_attention_bf16kv" : "flash_attention_f32");
     work.buffers.push_back({as_mtl(q), 0});
     work.buffers.push_back({as_mtl(k), 0});
     work.buffers.push_back({as_mtl(v), 0});
@@ -454,7 +474,7 @@ void submit_gather_op(const Buffer &table, const Buffer &indices, Buffer &out, s
     const size_t N = indices.numel();
     ComputeWork work;
     // The embedding table may be bf16 (dequantized weights kept compact) -> fp32 output.
-    const bool table_bf16 = (table.dtype() == backend::DType::BFLOAT16);
+    const bool table_bf16 = (table.dtype() == common::DType::BFLOAT16);
     work.pso = cache->get(table_bf16 ? "gather_bf16_f32" : "gather_f32");
     work.buffers.push_back({as_mtl(table), 0});
     work.buffers.push_back({as_mtl(indices), 0});

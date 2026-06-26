@@ -192,7 +192,7 @@ private:
 
         // Lazy mode: deferred (unallocated) leaf params, no random init -- weights come from load.
         auto ones_init = [&](std::vector<size_t> shape) {
-            return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
+            return _lazy ? ir::parameter(shape, device_type, common::DType::FLOAT32, false)
                          : ir::parameterize(ir::ones(shape, device_type));
         };
         // Bias-free projections; dense (random) or deferred (lazy) per _lazy. A quantized checkpoint
@@ -257,11 +257,11 @@ private:
         int32_t z_dim = val_dim;
 
         auto ones_init = [&](std::vector<size_t> shape) {
-            return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
+            return _lazy ? ir::parameter(shape, device_type, common::DType::FLOAT32, false)
                          : ir::parameterize(ir::ones(shape, device_type));
         };
         auto zeros_init = [&](std::vector<size_t> shape) {
-            return _lazy ? ir::parameter(shape, device_type, backend::DType::FLOAT32, false)
+            return _lazy ? ir::parameter(shape, device_type, common::DType::FLOAT32, false)
                          : ir::parameterize(ir::zeros(shape, device_type));
         };
         // Bias-free projections; dense (random) or deferred (lazy). [in_features, out_features].

@@ -13,6 +13,11 @@
 #include <memory>
 #include <vector>
 #include <random>
+#include <string>
+#include <cstdint>
+#include <fstream>
+#include <ostream>
+#include <istream>
 #include <algorithm>
 #include <functional>
 #include <unordered_set>
@@ -64,6 +69,15 @@ public:
 
     // Default end-of-sequence token id (used when the caller passes no explicit stop set).
     virtual int32_t default_eos() const = 0;
+
+    // --- Cache persistence (for cross-restart prompt-prefix caching) ---
+    // A tag identifying the model config, so a saved cache from a different model is rejected.
+    virtual uint64_t cache_tag() const = 0;
+    // Write the cache contents valid for the first `valid_len` tokens (KV prefix + recurrent state).
+    virtual void write_cache(const ModelCache& cache, size_t valid_len, std::ostream& os) const = 0;
+    // Allocate a cache of `capacity` positions and read `valid_len` tokens of contents into it.
+    virtual std::unique_ptr<ModelCache> read_cache(std::istream& is, size_t valid_len,
+                                                   size_t capacity) = 0;
 };
 
 // Persistent decode session: the model cache + the exact token sequence it currently represents.
@@ -136,6 +150,55 @@ inline std::vector<int32_t> generate_with_prefix_cache(
     sess.tokens = prompt;
     sess.tokens.insert(sess.tokens.end(), generated.begin(), generated.end());
     return generated;
+}
+
+// ---- Cross-restart prefix-cache persistence ----
+// Save / load a session's cache + token sequence to a single file, so a fixed prompt prefix (e.g. a
+// system + tools prompt) is prefilled ONCE on a machine, ever -- a server restart reloads the warm
+// cache instead of re-prefilling. The generic header (magic, model tag, capacity, tokens) is written
+// here; the model serializes its own cache bytes via write_cache / read_cache. A file whose model tag
+// doesn't match the running model is rejected.
+static constexpr uint64_t kPrefixCacheMagic = 0x43505846435F3032ULL;  // "CPXFC_02" (v2: per-tensor dtype tag)
+
+inline bool save_prefix_cache(DecodeModel& model, const PrefixCacheSession& sess,
+                              const std::string& path) {
+    if (!sess.cache || sess.tokens.empty()) return false;
+    std::ofstream os(path, std::ios::binary | std::ios::trunc);
+    if (!os) return false;
+    const uint64_t magic = kPrefixCacheMagic, tag = model.cache_tag();
+    const uint64_t vlen = sess.tokens.size(), cap = sess.capacity;
+    os.write(reinterpret_cast<const char*>(&magic), sizeof magic);
+    os.write(reinterpret_cast<const char*>(&tag),   sizeof tag);
+    os.write(reinterpret_cast<const char*>(&vlen),  sizeof vlen);
+    os.write(reinterpret_cast<const char*>(&cap),   sizeof cap);
+    os.write(reinterpret_cast<const char*>(sess.tokens.data()),
+             (std::streamsize)(vlen * sizeof(int32_t)));
+    model.write_cache(*sess.cache, sess.tokens.size(), os);
+    return static_cast<bool>(os);
+}
+
+// Restore into `sess` (cache + tokens + capacity). Returns false (leaving sess untouched) if the file
+// is absent / malformed / from a different model. capacity_hint, if larger, raises the allocation.
+inline bool load_prefix_cache(DecodeModel& model, PrefixCacheSession& sess,
+                              const std::string& path) {
+    std::ifstream is(path, std::ios::binary);
+    if (!is) return false;
+    uint64_t magic = 0, tag = 0, vlen = 0, cap = 0;
+    is.read(reinterpret_cast<char*>(&magic), sizeof magic);
+    is.read(reinterpret_cast<char*>(&tag),   sizeof tag);
+    is.read(reinterpret_cast<char*>(&vlen),  sizeof vlen);
+    is.read(reinterpret_cast<char*>(&cap),   sizeof cap);
+    if (!is || magic != kPrefixCacheMagic || tag != model.cache_tag()) return false;
+    std::vector<int32_t> toks(vlen);
+    is.read(reinterpret_cast<char*>(toks.data()), (std::streamsize)(vlen * sizeof(int32_t)));
+    if (!is) return false;
+    const size_t capacity = std::max<size_t>(cap, sess.capacity_hint);
+    auto cache = model.read_cache(is, (size_t)vlen, capacity);
+    if (!cache || !is) return false;
+    sess.cache = std::move(cache);
+    sess.tokens = std::move(toks);
+    sess.capacity = capacity;
+    return true;
 }
 
 } // namespace llm

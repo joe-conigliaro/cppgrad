@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/backend/device.h"
-#include "cppgrad/backend/dtype.h"
+#include "cppgrad/common/dtype.h"
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/utils/ref.h"
@@ -17,7 +17,7 @@ namespace ir {
 // Create a leaf parameter. Storage can be allocated now or deferred until first assign or eval.
 inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape,
     cppgrad::backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type(),
-    cppgrad::backend::DType dtype = cppgrad::backend::DType::FLOAT32, bool allocate_now = true) {
+    cppgrad::common::DType dtype = cppgrad::common::DType::FLOAT32, bool allocate_now = true) {
     std::shared_ptr<cppgrad::backend::Buffer> storage = nullptr;
     if (allocate_now) {
         auto* device_obj = cppgrad::backend::DeviceManager::device(device_type);

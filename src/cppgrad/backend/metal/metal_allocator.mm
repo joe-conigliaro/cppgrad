@@ -98,7 +98,7 @@ static void check_alloc(id<MTLBuffer> buf, size_t bytes, id<MTLDevice> dev) {
 }
 
 std::shared_ptr<Buffer> MetalAllocator::allocate(size_t num_elements,
-DType dtype) {
+common::DType dtype) {
     const size_t bytes = num_elements * size(dtype);
     // Zero-size allocation: Metal returns nil for newBufferWithLength:0 (which check_alloc would treat
     // as failure), so hand back an empty null-backed Buffer -- matching the host-data allocate overload.
@@ -111,7 +111,7 @@ DType dtype) {
 }
 
 std::shared_ptr<Buffer>
-MetalAllocator::allocate(const void *src, size_t num_elements, DType dtype) {
+MetalAllocator::allocate(const void *src, size_t num_elements, common::DType dtype) {
     const size_t bytes = num_elements * size(dtype);
     if (bytes == 0) {
         return std::make_shared<Buffer>(nullptr, 0, dtype, DeviceType::METAL, this);

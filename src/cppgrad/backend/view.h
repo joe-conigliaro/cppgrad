@@ -53,7 +53,7 @@ struct View {
     bool is_rowmaj_nn_2d()      const { return (rank == 2) && ((flags & VIEW2D_ROWMAJ_NN) != 0); }
     bool is_rowmaj_tn_2d()      const { return (rank == 2) && ((flags & VIEW2D_ROWMAJ_TN) != 0); }
 
-    static View from(const ir::AccessMeta& acc) {
+    static View from(const common::AccessMeta& acc) {
         View v{};
         v.rank = static_cast<uint32_t>(acc.shape.size());
         if (v.rank > kMaxRank) throw std::runtime_error("View::from: rank exceeds kMaxRank");
@@ -71,7 +71,7 @@ struct View {
         if (v.rank == 0)    v.flags |= VIEW_RANK0;
 
         // Row-major and identity
-        // If AccessMeta reports contiguous, the strides match row-major for this shape.
+        // If common::AccessMeta reports contiguous, the strides match row-major for this shape.
         // Otherwise, fall back to an explicit row-major stride equality check (offset may be non-zero).
         // bool is_row_major = acc.contiguous || (cppgrad::utils::shape::row_major_strides(acc.shape) == acc.strides);
         // NOTE: for now rely on acc.contiguous, but add debug check. If we find it throws we can investigate.
@@ -79,7 +79,7 @@ struct View {
         #ifdef CPPGRAD_DEBUG
             const bool is_row_major_strides = (cppgrad::utils::shape::row_major_strides(acc.shape) == acc.strides);
             if (is_row_major_strides != acc.contiguous) {
-                std::string msg = "AccessMeta.contiguous is stale/inconsistent. shape={";
+                std::string msg = "common::AccessMeta.contiguous is stale/inconsistent. shape={";
                 for (auto d : acc.shape) msg += std::to_string(d) + " ";
                 msg += "} strides={";
                 for (auto d : acc.strides) msg += std::to_string(d) + " ";
