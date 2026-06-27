@@ -76,18 +76,28 @@ kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
             uint m = row0 + i, k = kbase + j;
             As[i][j] = (m < M && k < K) ? A[(ulong)m * K + k] : 0.0f;
         }
-        // Load + dequantize weight tile Ws[QT_BK][QT_BN]: Ws[j][n] = dequant(col0+n, kbase+j).
-        for (uint idx = lt; idx < QT_BK * QT_BN; idx += NT) {
-            uint j = idx / QT_BN, n = idx % QT_BN;
-            uint col = col0 + n, k = kbase + j;
-            float val = 0.0f;
-            if (col < N && k < K) {
-                uint word = QW[(ulong)col * Kp + (k >> 2)];
-                uint code = (word >> (8 * (k & 3))) & 0xFFu;
-                uint g = k / GS;
-                val = S[(ulong)col * G + g] * (float)code + Bb[(ulong)col * G + g];
+        // Load + dequantize weight tile Ws[QT_BK][QT_BN]. Vectorized: one thread handles one packed
+        // u32 word = 4 consecutive K codes for a column, so the word load and the (per-group) scale +
+        // bias loads are each done ONCE per 4 codes instead of per code -- 4x fewer global loads, the
+        // dequant bottleneck. (Relies on GS % 4 == 0 so all 4 codes share one quant group, as the GEMV
+        // path already assumes.) The tile has QT_BN*(QT_BK/4) words; with NT == that count, one each.
+        const uint WPC = QT_BK / 4;                       // words per column in the K-tile
+        for (uint widx = lt; widx < QT_BN * WPC; widx += NT) {
+            uint n = widx / WPC, wj = widx % WPC;
+            uint col = col0 + n;
+            uint k0 = kbase + wj * 4;
+            uint  word = 0u; float s = 0.0f, b = 0.0f;
+            bool valid = (col < N && k0 < K);
+            if (valid) {
+                word = QW[(ulong)col * Kp + (k0 >> 2)];
+                uint g = k0 / GS;                         // shared by all 4 codes (GS % 4 == 0)
+                s = S[(ulong)col * G + g];
+                b = Bb[(ulong)col * G + g];
             }
-            Ws[j][n] = val;
+            for (uint c = 0; c < 4; ++c) {
+                uint k = k0 + c;
+                Ws[wj * 4 + c][n] = (valid && k < K) ? (s * (float)((word >> (8 * c)) & 0xFFu) + b) : 0.0f;
+            }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
 

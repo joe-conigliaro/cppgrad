@@ -172,6 +172,8 @@ inline float apply_unary(float x, ushort op) {
         case 4: return tanh(x);
         case 5: return sin(x);
         case 6: return cos(x);
+        case 7: { float s = 1.0f / (1.0f + exp(-x)); return x * s; }  // SILU = x*sigmoid(x)
+        case 8: return 1.0f / (1.0f + exp(-x));                       // SIGMOID
     }
     return x;
 }

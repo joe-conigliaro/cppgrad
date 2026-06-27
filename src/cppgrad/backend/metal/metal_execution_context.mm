@@ -25,12 +25,22 @@ MetalExecutionContext::~MetalExecutionContext() {
 }
 
 void MetalExecutionContext::submit_compute(ComputeWork work) {
-    // Work is batched and flushed at scope boundaries / explicit flush_pending (see flush()). A long
-    // computation that would otherwise pin too many resident buffers in one command buffer is bounded
-    // by the caller flushing at safe boundaries (e.g. prefill commits + flushes per chunk) -- NOT by
-    // auto-flushing here, which would commit mid-scope and break the "buffers live until the scope
-    // flush" invariant.
+    // Work is batched and flushed at scope boundaries / explicit flush_pending (see flush()).
     _computeWork.push_back(std::move(work));
+
+    // Opt-in safety valve (CPPGRAD_METAL_MAX_KERNELS=N): bound the command buffer to N kernels by
+    // flushing mid-scope. A large prefill chunk's linear-attention scan emits tens of thousands of
+    // small kernels; batching them all into one command buffer pins every transient buffer resident
+    // until completion and exhausts GPU memory (kIOGPUCommandBufferCallbackErrorOutOfMemory). flush()
+    // commits + waits, and intermediates stay owned by the graph (not freed), so a mid-scope flush is
+    // order-preserving -- it changes only WHEN work runs, not the result. This decouples prefill chunk
+    // size (throughput) from command-buffer size (memory). Off by default (0) -> unchanged behavior.
+    static const size_t kMaxKernels = [] {
+        const char* s = std::getenv("CPPGRAD_METAL_MAX_KERNELS");
+        int v = s ? atoi(s) : 0;
+        return v > 0 ? (size_t)v : (size_t)0;
+    }();
+    if (kMaxKernels && _computeWork.size() >= kMaxKernels) flush();
 }
 
 void MetalExecutionContext::flush() {

@@ -822,6 +822,13 @@ public:
         }
         if (progress)
             std::fprintf(stderr, "[prefill] %zu/%zu tok done in %.1fs\n", S, S, secs(t_start, clk::now()));
+        // CPPGRAD_PROFILE=1: per-op GPU-time / memory-traffic breakdown of PREFILL (QuantizedMatMulOp
+        // = the dequant-bound weight GEMMs; MatMulOp = attention + linear-attn scan matmuls; etc.),
+        // then reset so any subsequent decode profile is reported separately.
+        if (utils::Profiler::enabled()) {
+            utils::Profiler::instance().report(stderr, "prefill profile");
+            utils::Profiler::instance().reset();
+        }
         return h;  // [1, last_chunk, H]
     }
 

@@ -684,6 +684,38 @@ void Tensor::backward() {
                         parent_grads = {g};
                         break;
                     }
+                    case UnaryOpType::SIGMOID: {
+                        // d(sigmoid)/dx = s*(1-s), s = node (the output).
+                        auto one = Tensor::make(ConstantOp{ConstantOpType::FULL, 1.0}, {},
+                            node->shape(), node->device_type(), node->dtype());
+                        auto one_minus = Tensor::make(BinaryOp{BinaryOpType::SUB},
+                            {one, utils::Ref<const Tensor>(node)}, node->shape(), node->device_type(), node->dtype());
+                        auto deriv = Tensor::make(BinaryOp{BinaryOpType::MUL},
+                            {utils::Ref<const Tensor>(node), one_minus}, node->shape(), node->device_type(), node->dtype());
+                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL},
+                            {grad_this, deriv}, node->shape(), node->device_type(), node->dtype());
+                        parent_grads = {g};
+                        break;
+                    }
+                    case UnaryOpType::SILU: {
+                        // silu(x) = x*sigmoid(x); d/dx = s*(1 + x*(1-s)), s = sigmoid(x).
+                        auto s = Tensor::make(UnaryOp{UnaryOpType::SIGMOID}, {x},
+                            x->shape(), x->device_type(), x->dtype());
+                        auto one = Tensor::make(ConstantOp{ConstantOpType::FULL, 1.0}, {},
+                            x->shape(), x->device_type(), x->dtype());
+                        auto one_minus = Tensor::make(BinaryOp{BinaryOpType::SUB},
+                            {one, s}, x->shape(), x->device_type(), x->dtype());
+                        auto x_term = Tensor::make(BinaryOp{BinaryOpType::MUL},
+                            {x, one_minus}, x->shape(), x->device_type(), x->dtype());
+                        auto inner = Tensor::make(BinaryOp{BinaryOpType::ADD},
+                            {one, x_term}, x->shape(), x->device_type(), x->dtype());
+                        auto deriv = Tensor::make(BinaryOp{BinaryOpType::MUL},
+                            {s, inner}, x->shape(), x->device_type(), x->dtype());
+                        auto g = Tensor::make(BinaryOp{BinaryOpType::MUL},
+                            {grad_this, deriv}, node->shape(), node->device_type(), node->dtype());
+                        parent_grads = {g};
+                        break;
+                    }
                 }
             }
             else if constexpr (std::is_same_v<T, BinaryOp>) {

@@ -429,7 +429,7 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
     // dequantized ONCE into shared memory and reused across all 64 rows. (A simdgroup_matrix variant
     // was tried and dropped: the 8-bit GEMM is dequant/memory-access bound, not matmul-bound, so the
     // hardware matrix units gave no speedup, and a half-precision path lost too much accuracy.)
-    constexpr uint32_t QT_BM = 64, QT_BN = 64;  // must match #defines in the .metal kernel
+    constexpr uint32_t QT_BM = 64, QT_BN = 64, QT_RM = 4, QT_RN = 4;  // must match #defines in the .metal kernel
     uint32_t m = (uint32_t)M;
     work.pso = cache->get("matmul_quant_gemm_tiled_f32");
     work.buffers.push_back({as_mtl(a), 0});
@@ -443,7 +443,7 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
     work.add_bytes(8, &gs, sizeof(uint32_t));
     work.useThreadgroups = true;
     work.grid = MTLSizeMake((N + QT_BN - 1) / QT_BN, (M + QT_BM - 1) / QT_BM, 1);  // (N-tile, M-tile)
-    work.threadsPerThreadgroup = MTLSizeMake(QT_BN / 4, QT_BM / 4, 1);             // 16x16 = 256
+    work.threadsPerThreadgroup = MTLSizeMake(QT_BN / QT_RN, QT_BM / QT_RM, 1);     // 16x16 = 256
     encode_submit(work);
 }
 

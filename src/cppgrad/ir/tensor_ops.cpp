@@ -79,6 +79,8 @@ utils::Ref<Tensor> exp (const utils::Ref<const Tensor>& t) { return unary(UnaryO
 utils::Ref<Tensor> log (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::LOG,  t); }
 utils::Ref<Tensor> neg (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::NEG,  t); }
 utils::Ref<Tensor> tanh(const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::TANH, t); }
+utils::Ref<Tensor> silu(const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::SILU, t); }     // x*sigmoid(x), fused
+utils::Ref<Tensor> sigmoid(const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::SIGMOID, t); } // 1/(1+e^-x), fused
 utils::Ref<Tensor> sin (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::SIN,  t); }
 utils::Ref<Tensor> cos (const utils::Ref<const Tensor>& t) { return unary(UnaryOpType::COS,  t); }
 utils::Ref<Tensor> sqrt(const utils::Ref<const Tensor>& t) { return pow(t, 0.5f); }

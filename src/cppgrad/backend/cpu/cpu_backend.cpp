@@ -87,6 +87,8 @@ void CPUBackend::unary_op(ir::UnaryOpType op_type, const Buffer& a, const backen
                 case ir::UnaryOpType::TANH: return static_cast<T>(std::tanh(static_cast<double>(x)));
                 case ir::UnaryOpType::SIN:  return static_cast<T>(std::sin(static_cast<double>(x)));
                 case ir::UnaryOpType::COS:  return static_cast<T>(std::cos(static_cast<double>(x)));
+                case ir::UnaryOpType::SILU: { double s = 1.0/(1.0+std::exp(-static_cast<double>(x))); return static_cast<T>(static_cast<double>(x)*s); }
+                case ir::UnaryOpType::SIGMOID: return static_cast<T>(1.0/(1.0+std::exp(-static_cast<double>(x))));
             }
             return x;
         };

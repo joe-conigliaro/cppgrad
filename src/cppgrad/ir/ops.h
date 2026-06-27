@@ -94,7 +94,8 @@ struct NormalParams { float mean = 0.f, stddev = 1.f; };
 using RandomParams = std::variant<UniformParams, NormalParams>;
 struct RandomOp { RandomOpType type; RandomParams params; };
 
-enum class UnaryOpType { RELU, EXP, LOG, NEG, TANH, SIN, COS };
+// NOTE: ordinal values are the op codes passed to the Metal unary kernel (apply_unary) -- keep in sync.
+enum class UnaryOpType { RELU, EXP, LOG, NEG, TANH, SIN, COS, SILU, SIGMOID };
 struct UnaryOp { UnaryOpType type; };
 
 enum class BinaryOpType { ADD, SUB, MUL, DIV, POW, CMP_EQ, CMP_GT, MIN, MAX };
@@ -163,6 +164,8 @@ inline const char* to_string(const UnaryOp& op) {
         case UnaryOpType::TANH: return "UnaryOp:TANH";
         case UnaryOpType::SIN:  return "UnaryOp:SIN";
         case UnaryOpType::COS:  return "UnaryOp:COS";
+        case UnaryOpType::SILU: return "UnaryOp:SILU";
+        case UnaryOpType::SIGMOID: return "UnaryOp:SIGMOID";
     }
 }
 inline const char* to_string(const BinaryOp& op) {

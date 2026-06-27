@@ -318,9 +318,15 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
             if (profile_on) {
                 // Memory traffic moved by this op = output + all inputs (the cost proxy in a
                 // bandwidth-bound regime). Time is left to region scopes / backend GPU hooks.
-                uint64_t bytes = (uint64_t)t->numel() * common::size(t->dtype());
-                for (const auto& c : t->children())
-                    if (c) bytes += (uint64_t)c->numel() * common::size(c->dtype());
+                // MovementOp (reshape/permute/broadcast/slice) is a pure view here (out_buf aliases the
+                // parent -- no kernel, no traffic), so account 0 bytes; otherwise its logical size
+                // would inflate the breakdown and mask the ops that actually move data.
+                uint64_t bytes = 0;
+                if (!std::holds_alternative<cppgrad::ir::MovementOp>(t->op())) {
+                    bytes = (uint64_t)t->numel() * common::size(t->dtype());
+                    for (const auto& c : t->children())
+                        if (c) bytes += (uint64_t)c->numel() * common::size(c->dtype());
+                }
                 cppgrad::utils::Profiler::instance().record(cppgrad::ir::to_string(t->op()), 0.0, bytes);
             }
         }

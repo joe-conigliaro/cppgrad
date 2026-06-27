@@ -27,6 +27,8 @@ utils::Ref<Tensor> exp(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> log(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> neg(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> tanh(const utils::Ref<const Tensor>& t);
+utils::Ref<Tensor> silu(const utils::Ref<const Tensor>& t);
+utils::Ref<Tensor> sigmoid(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> sin(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> cos(const utils::Ref<const Tensor>& t);
 utils::Ref<Tensor> sqrt(const utils::Ref<const Tensor>& t);

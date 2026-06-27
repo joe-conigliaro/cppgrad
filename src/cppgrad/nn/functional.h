@@ -3,6 +3,8 @@
 #pragma once
 
 #include <cmath>
+#include <array>
+#include <vector>
 #include <numeric>
 #include <stdexcept>
 #include "cppgrad/ir/tensor_operators.h"
@@ -109,9 +111,12 @@ inline utils::Ref<ir::Tensor> tanh(const utils::Ref<ir::Tensor>& input) {
     return ir::tanh(input);
 }
 
+inline utils::Ref<ir::Tensor> sigmoid(const utils::Ref<ir::Tensor>& x) {
+    return ir::sigmoid(x);   // fused 1/(1+e^-x): one kernel/pass instead of neg+exp+add+div
+}
+
 inline utils::Ref<ir::Tensor> silu(const utils::Ref<ir::Tensor>& x) {
-    // silu(x) = x / (1 + exp(-x))
-    return ir::mul(x, ir::div(ir::scalar_like(1.0f, x), ir::add(ir::scalar_like(1.0f, x), ir::exp(ir::neg(x)))));
+    return ir::silu(x);      // fused x*sigmoid(x): one kernel/pass instead of neg+exp+add+div+mul
 }
 
 // GELU (fast approximation): 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
@@ -613,6 +618,28 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
     auto g_all = ir::reshape(ir::log(ir::add(decay, 1e-20f)), {BH, S, 1});
     auto beta_all = ir::reshape(beta, {BH, S, 1});
 
+    // Triangular masks, shape [1,L,L] (broadcast over heads):
+    //   M_incl[i,j] = 1 if j<=i   M_strict[i,j] = 1 if j<i   M_id[i,j] = 1 if i==j
+    // They depend only on the sub-chunk length L, which is `chunk` for every full sub-chunk -- so build
+    // them ONCE and reuse, instead of rebuilding + re-uploading 3 tensors per sub-chunk (a long prefill
+    // chunk has many sub-chunks x many layers -> thousands of redundant uploads/kernels). Only a
+    // trailing partial sub-chunk (L<chunk) builds its own.
+    auto build_masks = [&](size_t L) {
+        std::vector<float> mincl(L * L, 0.f), mstrict(L * L, 0.f), mid(L * L, 0.f);
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < L; ++j) {
+                if (j <= i) mincl[i * L + j] = 1.f;
+                if (j <  i) mstrict[i * L + j] = 1.f;
+                if (i == j) mid[i * L + j] = 1.f;
+            }
+        return std::array<utils::Ref<ir::Tensor>, 3>{
+            ir::from_vector<float>(mincl,   {1, L, L}, dev),
+            ir::from_vector<float>(mstrict, {1, L, L}, dev),
+            ir::from_vector<float>(mid,     {1, L, L}, dev)};
+    };
+    const size_t Lfull = std::min(chunk, S);
+    const auto masks_full = build_masks(Lfull);
+
     std::vector<utils::Ref<ir::Tensor>> o_chunks;
     for (size_t off = 0; off < S; off += chunk) {
         const size_t L = std::min(chunk, S - off);
@@ -623,18 +650,10 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
         auto gc = ir::slice(g_all,    {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
         auto bc = ir::slice(beta_all, {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
 
-        // Triangular masks, shape [1,L,L] (broadcast over heads):
-        //   M_incl[i,j]   = 1 if j<=i   M_strict[i,j] = 1 if j<i   M_id[i,j] = 1 if i==j
-        std::vector<float> mincl(L * L, 0.f), mstrict(L * L, 0.f), mid(L * L, 0.f);
-        for (size_t i = 0; i < L; ++i)
-            for (size_t j = 0; j < L; ++j) {
-                if (j <= i) mincl[i * L + j] = 1.f;
-                if (j <  i) mstrict[i * L + j] = 1.f;
-                if (i == j) mid[i * L + j] = 1.f;
-            }
-        auto M_incl   = ir::from_vector<float>(mincl,   {1, L, L}, dev);
-        auto M_strict = ir::from_vector<float>(mstrict, {1, L, L}, dev);
-        auto M_id     = ir::from_vector<float>(mid,     {1, L, L}, dev);
+        const auto masks = (L == Lfull) ? masks_full : build_masks(L);
+        auto M_incl   = masks[0];
+        auto M_strict = masks[1];
+        auto M_id     = masks[2];
 
         // Inclusive cumulative log-decay G_i = sum_{j<=i} g_j (<=0), via mask-multiply (no matmul).
         auto g_row = ir::reshape(gc, {BH, 1, L});                        // [BH,1,L]

@@ -392,7 +392,7 @@ private:
         }
 
         // Output gate (Qwen3.5+): attn_out * sigmoid(gate), elementwise per head/dim.
-        auto gate_sig = ir::div(1.0f, ir::add(ir::exp(ir::neg(gate)), 1.0f));
+        auto gate_sig = nn::functional::sigmoid(gate);
         attn_out = attn_out * gate_sig;
 
         attn_out = ir::reshape(attn_out, {B * S, (size_t)(nH * D)});
@@ -504,7 +504,7 @@ private:
         auto sp = nn::functional::softplus(a3 + la_dt_bias);                  // [B,S,n_v]
         auto A  = ir::exp(la_A_log);                                          // [n_v]
         auto decay_all = ir::exp(ir::neg(A * sp));                            // exp(g) in (0,1)
-        auto beta_all  = ir::div(1.0f, ir::add(ir::exp(ir::neg(b3)), 1.0f));  // sigmoid(b)
+        auto beta_all  = nn::functional::sigmoid(b3);                         // sigmoid(b)
 
         // -- gated delta rule via chunked-parallel scan --
         // Bit-equivalent to the per-token sequential recurrence (tests/test_gated_delta_chunked.cpp),
