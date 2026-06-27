@@ -1,7 +1,7 @@
 # CppGrad
 A small C++17 autograd + neural-network library.
 
-![CI - main branch](https://github.com/joe-conigliaro/cppgrad/actions/workflows/ci.yml/badge.svg?branch=main)
+[![CI](https://github.com/joe-conigliaro/cppgrad/actions/workflows/ci.yml/badge.svg)](https://github.com/joe-conigliaro/cppgrad/actions/workflows/ci.yml)
 
 ## Overview
 - **IR-style graph**: Ops create new `Tensor` nodes with child links.

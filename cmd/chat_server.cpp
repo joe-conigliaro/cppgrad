@@ -30,7 +30,7 @@ using cppgrad::server::ChatCompletionRequest;
 namespace anthropic = cppgrad::server::anthropic;
 
 struct ServerArgs {
-    std::string model_dir = "/Users/joe.c/.omlx/models/mlx-community/Qwen3.6-27B-8bit/";
+    std::string model_dir;
     std::string config = "27b";
     std::string host = "0.0.0.0";
     int port = 8080;
@@ -42,6 +42,15 @@ struct ServerArgs {
     int n_draft = 4;
     bool no_mtp = false;   // disable MTP self-speculation even if the checkpoint provides it
 };
+
+static void print_usage(const char* prog_name) {
+    std::cout << "Usage: " << prog_name
+              << " --model-dir <path> [--config <name>] [--port 8080] [--quant]\n"
+              << "       [--draft-model <path> [--draft-config 0.6b]] [--n-draft 4] [--no-mtp]\n"
+              << "  --config: 0.6b, 1.5b, 3b, 4b, 7b, 27b\n"
+              << "  speculative decode: auto-enabled if the checkpoint ships an MTP module;\n"
+              << "  or pass --draft-model for draft-model speculation. --n-draft sets the window.\n";
+}
 
 static ServerArgs parse_args(int argc, char** argv) {
     ServerArgs a;
@@ -71,15 +80,17 @@ static ServerArgs parse_args(int argc, char** argv) {
             case OPT_N_DRAFT:      a.n_draft = std::stoi(optarg); break;
             case OPT_NO_MTP:       a.no_mtp = true; break;
             case '?':
-                std::cout << "Usage: " << argv[0]
-                          << " --model-dir <path> [--config <name>] [--port 8080] [--quant]\n"
-                          << "       [--draft-model <path> [--draft-config 0.6b]] [--n-draft 4] [--no-mtp]\n"
-                          << "  --config: 0.6b, 1.5b, 3b, 4b, 7b, 27b\n"
-                          << "  speculative decode: auto-enabled if the checkpoint ships an MTP module;\n"
-                          << "  or pass --draft-model for draft-model speculation. --n-draft sets the window.\n";
+                print_usage(argv[0]);
                 exit(0);
         }
     }
+
+    if (a.model_dir.empty()) {
+        std::cerr << "Error: The --model-dir (-m) parameter is mandatory.\n\n";
+        print_usage(argv[0]);
+        exit(1);
+    }
+
     return a;
 }
 
