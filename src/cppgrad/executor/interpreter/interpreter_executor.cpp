@@ -179,6 +179,13 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
                     out_device->backend()->flash_attention(*parents[0], *parents[1], *parents[2], *out_buf,
                         B, S, nH, Dh, KV, nKV, op.scale, op.n_rep, op.causal, op.q_offset);
                 }
+                else if constexpr (std::is_same_v<T, cppgrad::ir::RMSNormOp>) {
+                    out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                    const auto& xs = t->children()[0]->shape();
+                    const size_t D = xs.back();
+                    const size_t rows = (D > 0) ? (t->numel() / D) : 0;
+                    out_device->backend()->rms_norm(*parents[0], *parents[1], *out_buf, rows, D, op.eps);
+                }
                 else if constexpr (std::is_same_v<T, cppgrad::ir::QuantizedMatMulOp>) {
                     out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                     const size_t M = t->children()[0]->shape()[0];

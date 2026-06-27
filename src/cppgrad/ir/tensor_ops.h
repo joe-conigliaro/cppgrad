@@ -57,6 +57,7 @@ utils::Ref<Tensor> matmul(const utils::Ref<const Tensor>& a, const utils::Ref<co
 utils::Ref<Tensor> flash_attention(const utils::Ref<const Tensor>& q, const utils::Ref<const Tensor>& k,
                                    const utils::Ref<const Tensor>& v, float scale, int n_rep,
                                    bool causal, size_t q_offset);
+utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor>& x, const utils::Ref<const Tensor>& weight, float eps);
 
 // Quantized matmul (inference): out[M,N] = a[M,K] @ dequant(qweight)^T, weights kept packed and
 // dequantized in-kernel. `params` selects the scheme (MLX affine 8-bit by default). For MLX affine:

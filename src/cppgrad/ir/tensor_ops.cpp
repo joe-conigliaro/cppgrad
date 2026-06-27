@@ -201,6 +201,12 @@ utils::Ref<Tensor> flash_attention(const utils::Ref<const Tensor>& q, const util
                         std::vector<size_t>(qs.begin(), qs.end()), q->device_type(), q->dtype());
 }
 
+// Fused RMSNorm over the last axis. Inference-only (non-differentiable); functional::rms_norm uses
+// this only for a dense (contiguous, offset 0) x and falls back to the composite otherwise.
+utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor>& x, const utils::Ref<const Tensor>& weight, float eps) {
+    return Tensor::make(RMSNormOp{eps}, {x, weight}, x->shape(), x->device_type(), x->dtype());
+}
+
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
                                     const utils::Ref<const Tensor>& qweight,
                                     const std::vector<utils::Ref<const Tensor>>& aux,

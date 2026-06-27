@@ -72,6 +72,13 @@ public:
         throw std::runtime_error("flash_attention: not implemented for this backend");
     }
 
+    // Fused RMSNorm over the last (contiguous) axis: out[r,d] = x[r,d] * rsqrt(mean_d(x^2)+eps) * w[d],
+    // for `rows` rows of width `D` (x, out dense row-major). One pass instead of square->reduce->mul->mul.
+    virtual void rms_norm(const Buffer & /*x*/, const Buffer & /*weight*/, Buffer & /*out*/,
+                          size_t /*rows*/, size_t /*D*/, float /*eps*/) const {
+        throw std::runtime_error("rms_norm: not implemented for this backend");
+    }
+
     // Quantized matmul: out[M,N] = a[M,K] @ dequant(qweight)^T (dequant in kernel). Dispatches on
     // params.scheme internally (one entry point for all schemes, not a virtual per quant type).
     // `aux` holds the scheme's metadata buffers in a scheme-defined order (see ir::QuantScheme):

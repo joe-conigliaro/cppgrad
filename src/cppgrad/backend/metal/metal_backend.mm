@@ -467,6 +467,25 @@ void submit_flash_attention(const Buffer &q, const Buffer &k, const Buffer &v, B
     encode_submit(work);
 }
 
+void submit_rms_norm(const Buffer &x, const Buffer &w, Buffer &out, size_t rows, size_t D, float eps) const {
+    if (out.size_bytes() == 0) return;
+    ComputeWork work;
+    work.pso = cache->get("rms_norm_f32");
+    work.buffers.push_back({as_mtl(x), 0});
+    work.buffers.push_back({as_mtl(w), 0});
+    work.buffers.push_back({as_mtl(out), 0});
+    uint32_t d_u32 = (uint32_t)D;
+    work.add_bytes(3, &d_u32, sizeof(uint32_t));
+    work.add_bytes(4, &eps, sizeof(float));
+    NSUInteger tpg = MIN((NSUInteger)work.pso.maxTotalThreadsPerThreadgroup, (NSUInteger)256);
+    tpg = MIN(tpg, (NSUInteger)D); if (tpg == 0) tpg = 1;
+    work.useThreadgroups = true;
+    work.grid = MTLSizeMake(rows, 1, 1);               // one threadgroup per row
+    work.threadsPerThreadgroup = MTLSizeMake(tpg, 1, 1);
+    work.threadgroupMemoryLength = tpg * sizeof(float); // smem for the reduction
+    encode_submit(work);
+}
+
 void submit_gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const {
     if (out.size_bytes() == 0) return;
     const size_t N = indices.numel();
@@ -681,6 +700,11 @@ void MetalBackend::flash_attention(const Buffer &q, const Buffer &k, const Buffe
                                    size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
                                    float scale, int n_rep, bool causal, size_t q_offset) const {
     _impl->submit_flash_attention(q, k, v, out, B, S, nH, Dh, KV, nKV, scale, n_rep, causal, q_offset);
+}
+
+void MetalBackend::rms_norm(const Buffer &x, const Buffer &w, Buffer &out,
+                            size_t rows, size_t D, float eps) const {
+    _impl->submit_rms_norm(x, w, out, rows, D, eps);
 }
 
 void MetalBackend::quantized_matmul(const Buffer &a, const Buffer &qweight,

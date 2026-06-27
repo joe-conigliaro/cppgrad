@@ -747,6 +747,31 @@ kernel void copy_view_bf16_to_f32(device float* dst [[buffer(1)]],
     copy_view_impl<bfloat, float>(dst, src, P, gid);
 }
 
+// Fused RMSNorm over the last axis: out[r,d] = x[r,d] * rsqrt(mean_d(x^2)+eps) * w[d].
+// One threadgroup per row (dense row-major, width D); threads cooperatively sum x^2, then normalize.
+// One pass over x (+ w) instead of the composite's square->reduce->rsqrt->mul->mul.
+kernel void rms_norm_f32(device const float* x   [[buffer(0)]],
+                         device const float* w   [[buffer(1)]],
+                         device float*       out [[buffer(2)]],
+                         constant uint&  D   [[buffer(3)]],
+                         constant float& eps [[buffer(4)]],
+                         threadgroup float* smem [[threadgroup(0)]],
+                         uint tid  [[thread_position_in_threadgroup]],
+                         uint gidx [[threadgroup_position_in_grid]],
+                         uint tpg  [[threads_per_threadgroup]]) {
+    const ulong row = (ulong)gidx * D;
+    float acc = 0.0f;
+    for (uint i = tid; i < D; i += tpg) { float v = x[row + i]; acc += v * v; }
+    smem[tid] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint stride = tpg >> 1; stride > 0; stride >>= 1) {
+        if (tid < stride) smem[tid] += smem[tid + stride];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    const float r = rsqrt(smem[0] / (float)D + eps);
+    for (uint i = tid; i < D; i += tpg) out[row + i] = x[row + i] * r * w[i];
+}
+
 // Reduce (fast: last axis)
 kernel void reduce_last_axis_f32(device const float* in_buf [[buffer(0)]],
                                  device float* out_buf [[buffer(1)]],

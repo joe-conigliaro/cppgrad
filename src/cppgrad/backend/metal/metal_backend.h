@@ -32,6 +32,8 @@ public:
     void flash_attention(const Buffer& q, const Buffer& k, const Buffer& v, Buffer& out,
                          size_t B, size_t S, size_t nH, size_t Dh, size_t KV, size_t nKV,
                          float scale, int n_rep, bool causal, size_t q_offset) const override;
+    void rms_norm(const Buffer& x, const Buffer& weight, Buffer& out,
+                  size_t rows, size_t D, float eps) const override;
     void gather_op(const Buffer& table, const Buffer& indices, Buffer& out, size_t V, size_t D) const override;
     void concat_op(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
                    Buffer& out, const backend::View& out_view, int axis) const override;

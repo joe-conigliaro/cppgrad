@@ -48,6 +48,10 @@ struct MatMulOp {};
 // position (no mask tensor): query row s (absolute position q_offset+s) attends keys [0, q_offset+s].
 // Inputs in native layout (no permute/copy): q [B,S,nH,Dh], k,v [B,KV,nKV,Dh]; output [B,S,nH,Dh].
 struct FlashAttentionOp { float scale; int n_rep; bool causal; size_t q_offset; };
+// Fused RMSNorm over the last axis: out = x * rsqrt(mean(x^2)+eps) * weight, in one kernel pass
+// (vs square->reduce->rsqrt->mul->mul). Inference-only (non-differentiable); training uses the
+// composite. children = {x, weight}.
+struct RMSNormOp { float eps; };
 
 // Quantization scheme descriptor (an op parameter, like RandomParams). The backend dispatches on
 // `scheme` internally, so a new scheme (GPTQ, AWQ, k-quants, ...) is a kernel branch -- not a virtual
@@ -124,6 +128,7 @@ using Op = std::variant<
     CacheUpdateOp,
     MatMulOp,
     FlashAttentionOp,
+    RMSNormOp,
     QuantizedMatMulOp,
     RandomOp,
     UnaryOp,
@@ -145,9 +150,11 @@ inline const char* to_string(const ScatterOp& op)     { return "ScatterOp"; }
 inline const char* to_string(const ConcatOp& op)      { return "ConcatOp"; }
 inline const char* to_string(const AssignOp& op)      { return "AssignOp"; }
 inline const char* to_string(const CacheUpdateOp& op) { return "CacheUpdateOp"; }
-inline const char* to_string(const MatMulOp& op)      { return "MatMulOp"; }
-inline const char* to_string(const FlashAttentionOp& op) { return "FlashAttentionOp"; }
+inline const char *to_string(const MatMulOp &op)      { return "MatMulOp"; }
 inline const char* to_string(const QuantizedMatMulOp& op) { return "QuantizedMatMulOp"; }
+inline const char* to_string(const FlashAttentionOp& op)  { return "FlashAttentionOp"; }
+inline const char* to_string(const RMSNormOp& op)     { return "RMSNormOp"; }
+
 inline const char* to_string(const RandomOp& op) {
     switch (op.type) {
         case RandomOpType::UNIFORM: return "RandomOp:UNIFORM";
@@ -229,6 +236,7 @@ inline constexpr bool is_differentiable_v =
     !std::is_same_v<std::decay_t<T>, GatherAxisOp> &&
     !std::is_same_v<std::decay_t<T>, QuantizedMatMulOp> &&
     !std::is_same_v<std::decay_t<T>, FlashAttentionOp> &&
+    !std::is_same_v<std::decay_t<T>, RMSNormOp> &&
     !std::is_same_v<std::decay_t<T>, ScatterOp>;
 // ConcatOp is differentiable (backward: split grad along axis).
 // Runtime.

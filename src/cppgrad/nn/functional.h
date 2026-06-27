@@ -11,6 +11,7 @@
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor.h"
+#include "cppgrad/ir/grad_mode.h"
 
 namespace cppgrad::nn::functional {
 
@@ -138,6 +139,11 @@ static utils::Ref<ir::Tensor> expand_dims_to(const utils::Ref<ir::Tensor>& t, si
 // RMSNorm: output = x * (1 + weight) * rsqrt(mean(x^2) + eps)
 // weight: [D], x: [..., D], norm over last axis
 inline utils::Ref<ir::Tensor> rms_norm(const utils::Ref<ir::Tensor>& x, const utils::Ref<ir::Tensor>& weight, float eps = 1e-5f) {
+    // Inference fast path: a single fused kernel (reduce+normalize in one pass) when x is dense
+    // row-major (offset 0). Training (grad mode) and strided inputs use the differentiable composite.
+    if (!ir::GradMode::enabled && x->access_meta().contiguous && x->access_meta().offset == 0) {
+        return ir::rms_norm(x, weight, eps);
+    }
     int nd = static_cast<int>(x->shape().size());
     int axis = nd - 1;
     size_t D = x->shape()[axis];

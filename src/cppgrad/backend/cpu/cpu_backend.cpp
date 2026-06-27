@@ -289,6 +289,21 @@ void CPUBackend::matmul(const Buffer& a, const backend::View& va,
     }
 }
 
+void CPUBackend::rms_norm(const Buffer& x, const Buffer& weight, Buffer& out,
+                          size_t rows, size_t D, float eps) const {
+    const float* xp = static_cast<const float*>(x.data());
+    const float* wp = static_cast<const float*>(weight.data());
+    float*       op = static_cast<float*>(out.data());
+    for (size_t r = 0; r < rows; ++r) {
+        const float* xr = xp + r * D;
+        float* orow = op + r * D;
+        double acc = 0.0;
+        for (size_t d = 0; d < D; ++d) acc += (double)xr[d] * (double)xr[d];
+        float rinv = (float)(1.0 / std::sqrt(acc / (double)D + (double)eps));
+        for (size_t d = 0; d < D; ++d) orow[d] = xr[d] * rinv * wp[d];
+    }
+}
+
 void CPUBackend::gather_op(const Buffer& table, const Buffer& indices, Buffer& out, size_t V, size_t D) const {
     const int32_t* idx = static_cast<const int32_t*>(indices.data());
     const size_t N = indices.numel();
