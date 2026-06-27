@@ -43,20 +43,18 @@ inline float quant_gemv_word(uint w,
 #define QT_BK 16
 #define QT_RM 4
 #define QT_RN 4
-kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
-                                        device const uint32_t* QW [[buffer(1)]],
-                                        device const float*    S  [[buffer(2)]],
-                                        device const float*    Bb [[buffer(3)]],
-                                        device float*          OUT[[buffer(4)]],
-                                        constant uint32_t& M  [[buffer(5)]],
-                                        constant uint32_t& N  [[buffer(6)]],
-                                        constant uint32_t& K  [[buffer(7)]],
-                                        constant uint32_t& GS [[buffer(8)]],
-                                        uint3 tid [[thread_position_in_threadgroup]],
-                                        uint3 bid [[threadgroup_position_in_grid]]) {
-    threadgroup float As[QT_BM][QT_BK];
-    threadgroup float Ws[QT_BK][QT_BN];
 
+// Templated on the activation type AT (fp32 or bf16) and output type OUTT (fp32 or bf16): activations
+// upconvert to float on load, accumulation is always fp32, the result downconverts to OUTT on store.
+// Lets the FFN run a bf16 activation path (gate/up -> bf16 out; down: bf16 A -> fp32 out) without an
+// extra convert pass, while weights stay 8-bit and accuracy stays fp32-accumulate.
+template <typename AT, typename OUTT>
+static inline void matmul_quant_gemm_tiled_impl(device const AT* A, device const uint32_t* QW,
+                                                device const float* S, device const float* Bb,
+                                                device OUTT* OUT, uint M, uint N, uint K, uint GS,
+                                                threadgroup float (&As)[QT_BM][QT_BK],
+                                                threadgroup float (&Ws)[QT_BK][QT_BN],
+                                                uint3 tid, uint3 bid) {
     const uint row0 = bid.y * QT_BM;
     const uint col0 = bid.x * QT_BN;
     const uint Kp = K / 4;
@@ -74,7 +72,7 @@ kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
         for (uint idx = lt; idx < QT_BM * QT_BK; idx += NT) {
             uint i = idx / QT_BK, j = idx % QT_BK;
             uint m = row0 + i, k = kbase + j;
-            As[i][j] = (m < M && k < K) ? A[(ulong)m * K + k] : 0.0f;
+            As[i][j] = (m < M && k < K) ? (float)A[(ulong)m * K + k] : 0.0f;
         }
         // Load + dequantize weight tile Ws[QT_BK][QT_BN]. Vectorized: one thread handles one packed
         // u32 word = 4 consecutive K codes for a column, so the word load and the (per-group) scale +
@@ -117,9 +115,54 @@ kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
         if (m >= M) continue;
         for (uint j = 0; j < QT_RN; ++j) {
             uint n = col0 + tid.x * QT_RN + j;
-            if (n < N) OUT[(ulong)m * N + n] = acc[i][j];
+            if (n < N) OUT[(ulong)m * N + n] = (OUTT)acc[i][j];
         }
     }
+}
+
+// fp32 A -> fp32 out (default prefill GEMM).
+kernel void matmul_quant_gemm_tiled_f32(device const float*    A  [[buffer(0)]],
+                                        device const uint32_t* QW [[buffer(1)]],
+                                        device const float*    S  [[buffer(2)]],
+                                        device const float*    Bb [[buffer(3)]],
+                                        device float*          OUT[[buffer(4)]],
+                                        constant uint32_t& M  [[buffer(5)]], constant uint32_t& N [[buffer(6)]],
+                                        constant uint32_t& K  [[buffer(7)]], constant uint32_t& GS[[buffer(8)]],
+                                        uint3 tid [[thread_position_in_threadgroup]],
+                                        uint3 bid [[threadgroup_position_in_grid]]) {
+    threadgroup float As[QT_BM][QT_BK];
+    threadgroup float Ws[QT_BK][QT_BN];
+    matmul_quant_gemm_tiled_impl<float, float>(A, QW, S, Bb, OUT, M, N, K, GS, As, Ws, tid, bid);
+}
+
+// fp32 A -> bf16 out (FFN gate/up: feed a bf16 activation path).
+kernel void matmul_quant_gemm_tiled_f32a_bf16o(device const float*    A  [[buffer(0)]],
+                                               device const uint32_t* QW [[buffer(1)]],
+                                               device const float*    S  [[buffer(2)]],
+                                               device const float*    Bb [[buffer(3)]],
+                                               device bfloat*         OUT[[buffer(4)]],
+                                               constant uint32_t& M  [[buffer(5)]], constant uint32_t& N [[buffer(6)]],
+                                               constant uint32_t& K  [[buffer(7)]], constant uint32_t& GS[[buffer(8)]],
+                                               uint3 tid [[thread_position_in_threadgroup]],
+                                               uint3 bid [[threadgroup_position_in_grid]]) {
+    threadgroup float As[QT_BM][QT_BK];
+    threadgroup float Ws[QT_BK][QT_BN];
+    matmul_quant_gemm_tiled_impl<float, bfloat>(A, QW, S, Bb, OUT, M, N, K, GS, As, Ws, tid, bid);
+}
+
+// bf16 A -> fp32 out (FFN down: consume the bf16 activation path, back to the fp32 residual stream).
+kernel void matmul_quant_gemm_tiled_bf16a_f32o(device const bfloat*   A  [[buffer(0)]],
+                                               device const uint32_t* QW [[buffer(1)]],
+                                               device const float*    S  [[buffer(2)]],
+                                               device const float*    Bb [[buffer(3)]],
+                                               device float*          OUT[[buffer(4)]],
+                                               constant uint32_t& M  [[buffer(5)]], constant uint32_t& N [[buffer(6)]],
+                                               constant uint32_t& K  [[buffer(7)]], constant uint32_t& GS[[buffer(8)]],
+                                               uint3 tid [[thread_position_in_threadgroup]],
+                                               uint3 bid [[threadgroup_position_in_grid]]) {
+    threadgroup float As[QT_BM][QT_BK];
+    threadgroup float Ws[QT_BK][QT_BN];
+    matmul_quant_gemm_tiled_impl<bfloat, float>(A, QW, S, Bb, OUT, M, N, K, GS, As, Ws, tid, bid);
 }
 
 // Decode GEMV (M == 1): one simdgroup (32 lanes) per output column n, cooperative reduction over K.

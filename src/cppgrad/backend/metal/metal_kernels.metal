@@ -234,12 +234,11 @@ kernel void rand_normal(device float* out [[buffer(0)]],
     if (next < out_numel) out[next] = mean + stddev * z1;
 }
 
-// Unary (stride-aware)
-
-kernel void unary_view_f32(device const float* in_buf [[buffer(0)]],
-                           device float* out_buf [[buffer(1)]],
-                           constant mslp::UnaryParams& P [[buffer(2)]],
-                           uint gid [[thread_position_in_grid]]) {
+// Unary (stride-aware). Templated on element type T (fp32 or bf16): elements upconvert to float,
+// the math runs in float, the result downconverts to T -- a bf16 activation costs half the traffic.
+template <typename T>
+static inline void unary_view_impl(device const T* in_buf, device T* out_buf,
+                                   constant mslp::UnaryParams& P, uint gid) {
     if (gid >= P.n) return;
 
     uint ocoords[8];
@@ -263,17 +262,27 @@ kernel void unary_view_f32(device const float* in_buf [[buffer(0)]],
 
     uint ai = index_from_coords(icoords, P.in_v);
     uint oi = index_from_coords(ocoords, P.out_v);
-    float x = in_buf[ai];
-    out_buf[oi] = apply_unary(x, P.op);
+    out_buf[oi] = (T)apply_unary((float)in_buf[ai], P.op);
 }
 
-// Binary (stride-aware)
+kernel void unary_view_f32(device const float* in_buf [[buffer(0)]],
+                           device float* out_buf [[buffer(1)]],
+                           constant mslp::UnaryParams& P [[buffer(2)]],
+                           uint gid [[thread_position_in_grid]]) {
+    unary_view_impl<float>(in_buf, out_buf, P, gid);
+}
 
-kernel void binary_view_f32(device const float* a_buf [[buffer(0)]],
-                            device const float* b_buf [[buffer(1)]],
-                            device float* out_buf [[buffer(2)]],
-                            constant mslp::BinaryParams& P [[buffer(3)]],
+kernel void unary_view_bf16(device const bfloat* in_buf [[buffer(0)]],
+                            device bfloat* out_buf [[buffer(1)]],
+                            constant mslp::UnaryParams& P [[buffer(2)]],
                             uint gid [[thread_position_in_grid]]) {
+    unary_view_impl<bfloat>(in_buf, out_buf, P, gid);
+}
+
+// Binary (stride-aware). Templated on element type T (fp32 or bf16).
+template <typename T>
+static inline void binary_view_impl(device const T* a_buf, device const T* b_buf, device T* out_buf,
+                                    constant mslp::BinaryParams& P, uint gid) {
     if (gid >= P.n) return;
 
     uint ocoords[8];
@@ -321,8 +330,23 @@ kernel void binary_view_f32(device const float* a_buf [[buffer(0)]],
     uint bi = index_from_coords(bcoords, P.b_v);
     uint oi = index_from_coords(ocoords, P.o_v);
 
-    float x = a_buf[ai], y = b_buf[bi];
-    out_buf[oi] = apply_binary(x, y, P.op);
+    out_buf[oi] = (T)apply_binary((float)a_buf[ai], (float)b_buf[bi], P.op);
+}
+
+kernel void binary_view_f32(device const float* a_buf [[buffer(0)]],
+                            device const float* b_buf [[buffer(1)]],
+                            device float* out_buf [[buffer(2)]],
+                            constant mslp::BinaryParams& P [[buffer(3)]],
+                            uint gid [[thread_position_in_grid]]) {
+    binary_view_impl<float>(a_buf, b_buf, out_buf, P, gid);
+}
+
+kernel void binary_view_bf16(device const bfloat* a_buf [[buffer(0)]],
+                             device const bfloat* b_buf [[buffer(1)]],
+                             device bfloat* out_buf [[buffer(2)]],
+                             constant mslp::BinaryParams& P [[buffer(3)]],
+                             uint gid [[thread_position_in_grid]]) {
+    binary_view_impl<bfloat>(a_buf, b_buf, out_buf, P, gid);
 }
 
 // Matmul (stride-aware rank-2)

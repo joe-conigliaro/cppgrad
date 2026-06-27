@@ -142,7 +142,7 @@ const backend::View &vo) const {
     P.op = (unsigned short)op_type;
 
     ComputeWork work;
-    work.pso = cache->get("unary_view_f32");
+    work.pso = cache->get(out.dtype() == common::DType::BFLOAT16 ? "unary_view_bf16" : "unary_view_f32");
     work.buffers.push_back({as_mtl(a), 0});
     work.buffers.push_back({as_mtl(out), 0});
     work.add_bytes(2, &P, sizeof(P));
@@ -164,7 +164,7 @@ const backend::View &vo) const {
     P.op = (unsigned short)op_type;
 
     ComputeWork work;
-    work.pso = cache->get("binary_view_f32");
+    work.pso = cache->get(out.dtype() == common::DType::BFLOAT16 ? "binary_view_bf16" : "binary_view_f32");
     work.buffers.push_back({as_mtl(a), 0});
     work.buffers.push_back({as_mtl(b), 0});
     work.buffers.push_back({as_mtl(out), 0});
@@ -429,7 +429,15 @@ void submit_matmul_quant(const Buffer &a, const Buffer &qweight, const Buffer &s
     // hardware matrix units gave no speedup, and a half-precision path lost too much accuracy.)
     constexpr uint32_t QT_BM = 64, QT_BN = 64, QT_RM = 4, QT_RN = 4;  // must match #defines in the .metal kernel
     uint32_t m = (uint32_t)M;
-    work.pso = cache->get("matmul_quant_gemm_tiled_f32");
+    // Pick the activation-dtype variant. Weights are always 8-bit; only A (in) and OUT vary, for the
+    // bf16 FFN activation path (gate/up: f32->bf16; down: bf16->f32). fp32->fp32 is the default.
+    const bool a_bf16   = (a.dtype()   == common::DType::BFLOAT16);
+    const bool out_bf16 = (out.dtype() == common::DType::BFLOAT16);
+    const char* qgemm = "matmul_quant_gemm_tiled_f32";
+    if (!a_bf16 && out_bf16)      qgemm = "matmul_quant_gemm_tiled_f32a_bf16o";
+    else if (a_bf16 && !out_bf16) qgemm = "matmul_quant_gemm_tiled_bf16a_f32o";
+    else if (a_bf16 && out_bf16)  throw std::runtime_error("quant GEMM: bf16->bf16 variant not built");
+    work.pso = cache->get(qgemm);
     work.buffers.push_back({as_mtl(a), 0});
     work.buffers.push_back({as_mtl(qweight), 0});
     work.buffers.push_back({as_mtl(scales), 0});

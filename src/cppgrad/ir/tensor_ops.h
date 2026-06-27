@@ -67,7 +67,8 @@ utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor>& x, const utils::Ref<
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
                                     const utils::Ref<const Tensor>& qweight,
                                     const std::vector<utils::Ref<const Tensor>>& aux,
-                                    const ir::QuantParams& params = {});
+                                    const ir::QuantParams& params = {},
+                                    common::DType out_dtype = common::DType::UNKNOWN);
 
 // Gather Op: table[V, D, ...] + indices[...] -> output[indices->shape(), D, ...]
 // Preserves indices shape; appends table's remaining dimensions after axis 0.

@@ -210,7 +210,8 @@ utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor>& x, const utils::Ref<
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
                                     const utils::Ref<const Tensor>& qweight,
                                     const std::vector<utils::Ref<const Tensor>>& aux,
-                                    const ir::QuantParams& params) {
+                                    const ir::QuantParams& params,
+                                    common::DType out_dtype) {
     if (a->shape().size() != 2)
         throw std::runtime_error("quantized_matmul: activation must be 2D [M,K]");
     const size_t K = a->shape()[1];
@@ -223,8 +224,11 @@ utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor>& a,
     std::vector<utils::Ref<const Tensor>> inputs = {a, qweight};
     inputs.insert(inputs.end(), aux.begin(), aux.end());
     std::vector<size_t> out_shape = {a->shape()[0], N};
+    // out_dtype defaults to UNKNOWN -> follow the activation dtype; pass BFLOAT16/FLOAT32 to force the
+    // output precision (the bf16 FFN activation path: gate/up emit bf16, down emits fp32).
+    common::DType od = (out_dtype == common::DType::UNKNOWN) ? a->dtype() : out_dtype;
     return Tensor::make(QuantizedMatMulOp{params}, inputs,
-                        out_shape, a->device_type(), a->dtype());
+                        out_shape, a->device_type(), od);
 }
 
 // Gather Op: table[V, D, ...] + indices[...] -> output[indices->shape(), D, ...]

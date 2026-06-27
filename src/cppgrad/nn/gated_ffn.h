@@ -2,6 +2,7 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
+#include <cstdlib>
 #include "cppgrad/nn/functional.h"
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/module.h"
@@ -58,6 +59,21 @@ public:
     }
 
     utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& input) override {
+        // bf16 activation path (CPPGRAD_BF16_ACT=1): run the FFN intermediate in bf16 -- gate/up emit
+        // bf16, silu+mul run bf16, down consumes bf16 -> fp32 (back to the residual). Halves the FFN's
+        // elementwise + GEMM-I/O traffic; fp32-accumulate so loss is bf16-rounding only. Prefill only
+        // (M>1 tiled GEMM; decode's M==1 GEMV stays fp32 and is weight-bandwidth-bound anyway),
+        // quantized SwiGLU only (the dense/gelu/relu paths keep fp32).
+        static const bool BF16_ACT = std::getenv("CPPGRAD_BF16_ACT") != nullptr;
+        if (BF16_ACT && _inner_act == InnerAct::SILU && gate_proj->quantized &&
+            input->shape().size() == 2 && input->shape()[0] > 1) {
+            const auto bf16 = common::DType::BFLOAT16, f32 = common::DType::FLOAT32;
+            auto gate = ir::quantized_matmul(input, gate_proj->qweight, {gate_proj->scales, gate_proj->biases}, gate_proj->params, bf16);
+            auto up   = ir::quantized_matmul(input, up_proj->qweight,   {up_proj->scales,   up_proj->biases},   up_proj->params,   bf16);
+            auto prod = functional::silu(gate) * up;   // bf16 (dtype propagates through silu + mul)
+            return ir::quantized_matmul(prod, down_proj->qweight, {down_proj->scales, down_proj->biases}, down_proj->params, f32);
+        }
+
         auto gate = (*gate_proj)(input);
         auto up   = (*up_proj)(input);
 
