@@ -29,8 +29,7 @@
 #include <nlohmann/json.hpp>
 #include "cppgrad/io/tokenizer.h"
 
-namespace cppgrad {
-namespace io {
+namespace cppgrad::io {
 
 // A single chat message (role + content + optional tool-call metadata).
 struct ChatMessage {
@@ -151,5 +150,4 @@ public:
     }
 };
 
-} // namespace io
-} // namespace cppgrad
+} // namespace cppgrad::io

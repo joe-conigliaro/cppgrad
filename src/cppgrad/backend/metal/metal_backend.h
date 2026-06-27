@@ -7,9 +7,7 @@
 #include "cppgrad/backend/backend.h"
 #include "cppgrad/backend/view.h"
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 class MetalExecutionContext;
 
@@ -62,6 +60,4 @@ private:
     std::unique_ptr<Impl> _impl;
 };
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

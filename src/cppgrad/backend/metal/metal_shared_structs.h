@@ -2,9 +2,7 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 struct View32 {
     unsigned short rank;
@@ -122,6 +120,4 @@ struct ScatterAxisParams {
     unsigned int axis;
 };
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

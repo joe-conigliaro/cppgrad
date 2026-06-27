@@ -10,9 +10,7 @@
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/utils/rng.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 // RNG helpers
 static inline uint32_t lcg(uint32_t x) { return 1664525u * x + 1013904223u; }
@@ -396,6 +394,4 @@ void CPUBackend::copy_view(const Buffer& src, const backend::View& vs, Buffer& d
     }));
 }
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

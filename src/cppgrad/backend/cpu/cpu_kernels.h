@@ -16,9 +16,7 @@
 #include "cppgrad/utils/shape.h"
 #include "cppgrad/backend/view.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 // Helpers
 
@@ -1128,7 +1126,4 @@ inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv,
     });
 }
 
-
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

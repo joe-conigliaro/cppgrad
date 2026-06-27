@@ -5,9 +5,7 @@
 #include "cppgrad/backend/backend.h"
 #include "cppgrad/backend/view.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 class CPUBackend : public Backend {
 public:
@@ -45,6 +43,4 @@ public:
     void rand_normal(Buffer& out, float mean, float stddev) const override;
 };
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

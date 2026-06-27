@@ -32,10 +32,7 @@
 #include "cppgrad/nn/llm/qwen/qwen3_config.h"
 #include "cppgrad/nn/llm/qwen/qwen3_block.h"
 
-namespace cppgrad {
-namespace nn {
-namespace llm {
-namespace qwen {
+namespace cppgrad::nn::llm::qwen {
 
 struct KVCache {
     utils::Ref<ir::Tensor> k;
@@ -1342,7 +1339,4 @@ private:
     utils::Ref<ir::Tensor> _inv_freq;
 };
 
-} // namespace qwen
-} // namespace llm
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn::llm::qwen

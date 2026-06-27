@@ -16,8 +16,7 @@
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/common/dtype.h"
 
-namespace cppgrad {
-namespace io {
+namespace cppgrad::io {
 
 // Convert BFloat16 (2 bytes) to float32.
 static inline float bf16_to_float32(uint16_t b) {
@@ -431,5 +430,4 @@ inline std::map<std::string, utils::Ref<ir::Tensor>> dequantize_mlx_tensors(
     return result;
 }
 
-} // namespace io
-} // namespace cppgrad
+} // namespace cppgrad::io

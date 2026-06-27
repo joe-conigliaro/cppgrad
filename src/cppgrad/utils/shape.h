@@ -10,9 +10,7 @@
 #include <functional>
 #include "cppgrad/utils/vector.h"
 
-namespace cppgrad {
-namespace utils {
-namespace shape {
+namespace cppgrad::utils::shape {
 
 inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t>& a_shape, const std::vector<size_t>& b_shape) {
     auto max_rank = std::max(a_shape.size(), b_shape.size());
@@ -197,6 +195,4 @@ inline std::vector<int> normalize_unique_sorted_axes(const std::vector<int>& axe
     return unique_sorted_axes(normalize_axes(axes, rank));
 }
 
-} // namespace shape
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils::shape

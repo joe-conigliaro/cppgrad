@@ -7,9 +7,7 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 // Small impl that owns device, queue, and reusable staging
 class MetalAllocatorImpl {
@@ -227,6 +225,4 @@ const Buffer &src) const {
     _impl->blit_copy(mtl_src, mtl_dst, (NSUInteger)bytes);
 }
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

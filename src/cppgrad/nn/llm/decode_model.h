@@ -25,9 +25,7 @@
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/utils/ref.h"
 
-namespace cppgrad {
-namespace nn {
-namespace llm {
+namespace cppgrad::nn::llm {
 
 // Sampling controls (generic). logits are scaled by 1/temperature and optionally filtered by
 // top_k / top_p before a categorical draw. seed == 0 => nondeterministic. temperature <= 0 => greedy.
@@ -201,6 +199,4 @@ inline bool load_prefix_cache(DecodeModel& model, PrefixCacheSession& sess,
     return true;
 }
 
-} // namespace llm
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn::llm

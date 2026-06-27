@@ -7,8 +7,7 @@
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/common/access_meta.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 // Combined storage-and-view descriptor shared across tensors.
 // Multiple tensors can share 'buffer' while each carries its own 'view'.
@@ -32,5 +31,4 @@ struct StorageView {
     common::AccessMeta access_meta;
 };
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

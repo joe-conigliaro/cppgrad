@@ -7,8 +7,7 @@
 #include "cppgrad/nn/functional.h"
 #include "cppgrad/nn/module.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 
 class ReLU : public Module {
@@ -29,6 +28,4 @@ public:
     }
 };
 
-
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

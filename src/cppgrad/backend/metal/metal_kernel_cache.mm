@@ -5,9 +5,7 @@
 #include <stdexcept>
 #include "cppgrad/backend/metal/metal_kernel_cache.h"
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 MetalKernelCache::MetalKernelCache(id<MTLDevice> device) : _device(device) {
     NSError* error = nil;
@@ -47,6 +45,4 @@ id<MTLComputePipelineState> MetalKernelCache::get(const std::string& name) {
     return pso;
 }
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

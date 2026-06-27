@@ -6,8 +6,7 @@
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/tensor_operators.h"
 
-namespace cppgrad {
-namespace optim {
+namespace cppgrad::optim {
 
 class SGD : public Optimizer {
 public:
@@ -34,5 +33,4 @@ public:
 
 };
 
-} // namespace optim
-} // namespace cppgrad
+} // namespace cppgrad::optim

@@ -8,8 +8,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace cppgrad {
-namespace utils {
+namespace cppgrad::utils {
 
 // Base class for intrusive reference counting
 class RefCounted {
@@ -174,8 +173,7 @@ inline bool operator>=(const Ref<T>& lhs, const Ref<U>& rhs) noexcept {
     return lhs.get() >= rhs.get();
 }
 
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils
 
 // std::hash Specialization
 namespace std {

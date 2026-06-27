@@ -5,9 +5,7 @@
 #include <memory>
 #include "cppgrad/backend/allocator.h"
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 // Forward-declare metal execution context
 class MetalExecutionContext;
@@ -31,6 +29,4 @@ private:
     std::unique_ptr<MetalAllocatorImpl> _impl;
 };
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

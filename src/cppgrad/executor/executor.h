@@ -9,12 +9,13 @@
 #include "cppgrad/utils/ref.h"
 
 // Forward declarations.
-namespace cppgrad { namespace ir { class Tensor; } namespace common { struct AccessMeta; } }
-
 namespace cppgrad {
-// Forward declaration.
+namespace ir { class Tensor; } 
 namespace backend { class Buffer; }
-namespace executor {
+namespace common { struct AccessMeta; }
+}
+
+namespace cppgrad::executor {
 
 class Executor {
 public:
@@ -38,5 +39,4 @@ protected:
         const std::vector<utils::Ref<const ir::Tensor>>& outs);
 };
 
-} // namespace executor
-} // namespace cppgrad
+} // namespace cppgrad::executor

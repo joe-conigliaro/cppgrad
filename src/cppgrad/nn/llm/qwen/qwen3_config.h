@@ -6,10 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-namespace cppgrad {
-namespace nn {
-namespace llm {
-namespace qwen {
+namespace cppgrad::nn::llm::qwen {
 
 enum class LayerType {
     FULL_ATTENTION,
@@ -144,7 +141,4 @@ struct Qwen3Config {
     }
 };
 
-} // namespace qwen
-} // namespace llm
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn::llm::qwen

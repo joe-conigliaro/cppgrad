@@ -7,8 +7,7 @@
 #include <stdexcept>
 #include "cppgrad/utils/shape.h"
 
-namespace cppgrad {
-namespace common {
+namespace cppgrad::common { 
 
 // Access metadata (logical view of buffer)
 struct AccessMeta {
@@ -131,5 +130,4 @@ struct AccessMeta {
     bool contiguous = true;
 };
 
-} // namespace common
-} // namespace cppgrad
+} // namespace cppgrad::common

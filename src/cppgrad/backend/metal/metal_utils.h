@@ -6,9 +6,7 @@
 #include <stdexcept>
 #include "cppgrad/backend/buffer.h"
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 // Safely casts the generic void* from a Buffer to the concrete id<MTLBuffer> type.
 // This is the designated way for Metal backend code to access the underlying buffer object.
@@ -29,6 +27,4 @@ inline id<MTLBuffer> as_mtl_checked(const Buffer& buf) {
     return (__bridge id<MTLBuffer>)buf.data();
 }
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

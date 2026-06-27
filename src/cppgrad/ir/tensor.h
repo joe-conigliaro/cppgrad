@@ -23,8 +23,7 @@
 
 namespace cppgrad::utils { class Arena; }
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 class GraphContext;
 
@@ -62,7 +61,7 @@ public:
 
     template<typename T> T item() const;
     template<typename T> std::vector<T> to_vector() const;
-    template<typename T> cppgrad::Span<const T> data_span() const;
+    template<typename T> cppgrad::compat::Span<const T> data_span() const;
 
     // Grad
     bool requires_grad() const noexcept { return _requires_grad; }
@@ -231,7 +230,7 @@ std::vector<T> Tensor::to_vector() const {
 }
 
 template<typename T>
-cppgrad::Span<const T> Tensor::data_span() const {
+cppgrad::compat::Span<const T> Tensor::data_span() const {
     if (common::dtype_v<T> != this->dtype()) throw std::runtime_error("data_span: dtype mismatch");
     // const auto& buf = schedule();
     const auto& buf = eval();
@@ -243,8 +242,7 @@ cppgrad::Span<const T> Tensor::data_span() const {
     if (!buf) throw std::runtime_error("data_span: null buffer");
     const T* p = static_cast<const T*>(buf->data());
     if (!p && numel() > 0) throw std::runtime_error("data_span: null ptr on non-empty tensor");
-    return cppgrad::Span<const T>(p, numel());
+    return cppgrad::compat::Span<const T>(p, numel());
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

@@ -6,8 +6,7 @@
 #include <vector>
 #include "cppgrad/ir/tensor.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 utils::Ref<Tensor> assign(const utils::Ref<const Tensor>& dst, const utils::Ref<const Tensor>& src);
 
@@ -112,5 +111,4 @@ utils::Ref<Tensor> mul(float val, const utils::Ref<const Tensor>& a);
 utils::Ref<Tensor> div(float val, const utils::Ref<const Tensor>& a);
 utils::Ref<Tensor> pow(float val, const utils::Ref<const Tensor>& a);
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

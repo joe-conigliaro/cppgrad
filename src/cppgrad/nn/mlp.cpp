@@ -4,8 +4,7 @@
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/activations.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 MLP::MLP(int in_features, int hidden_size, int out_features) {
     // Register the layers in order. The base class forward pass will handle them.
@@ -20,5 +19,4 @@ MLP::MLP(int in_features, int hidden_size, int out_features) {
 
 MLP::~MLP() = default;
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

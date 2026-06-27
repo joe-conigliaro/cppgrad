@@ -7,11 +7,9 @@
 #include "cppgrad/executor/executor.h"
 #include "cppgrad/utils/ref.h"
 
-namespace cppgrad {
 // Forward declaration.
-namespace backend { class Buffer; }
-namespace executor {
-namespace interpreter {
+namespace cppgrad::backend { class Buffer; }
+namespace cppgrad::executor::interpreter {
 
 class InterpreterExecutor : public cppgrad::executor::Executor {
 public:
@@ -24,6 +22,4 @@ public:
     void realize_scheduled(const std::vector<DeviceSchedule>& schedules);
 };
 
-} // namespace interpreter
-} // namespace executor
-} // namespace cppgrad
+} // namespace cppgrad::executor::interpreter

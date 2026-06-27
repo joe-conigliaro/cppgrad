@@ -4,8 +4,7 @@
 
 #include "cppgrad/ir/tensor_ops.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 // Operator Overloads
 
@@ -27,5 +26,4 @@ inline utils::Ref<Tensor> operator-(float val, const utils::Ref<Tensor>& a) { re
 inline utils::Ref<Tensor> operator*(float val, const utils::Ref<Tensor>& a) { return mul(val, a); }
 inline utils::Ref<Tensor> operator/(float val, const utils::Ref<Tensor>& a) { return div(val, a); }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

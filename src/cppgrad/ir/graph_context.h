@@ -7,8 +7,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/utils/arena.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 // Manages arena allocation and batched realization for a compute scope
 class GraphContext {
@@ -69,5 +68,4 @@ public:
     static void flush();
 };
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

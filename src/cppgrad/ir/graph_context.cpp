@@ -6,8 +6,7 @@
 #include "cppgrad/backend/device.h"
 #include "cppgrad/backend/backend.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 GraphContext& GraphContext::instance() {
     static thread_local GraphContext ctx;
@@ -75,5 +74,4 @@ GraphScope::~GraphScope() {
     }
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

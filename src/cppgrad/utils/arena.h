@@ -11,8 +11,7 @@
 #include <algorithm>
 #include <type_traits>
 
-namespace cppgrad {
-namespace utils {
+namespace cppgrad::utils {
 
 class Arena {
 public:
@@ -149,5 +148,4 @@ private:
     size_t _remaining_bytes = 0;
 };
 
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils

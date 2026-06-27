@@ -5,9 +5,7 @@
 #include <stdexcept>
 #include "cppgrad/common/dtype.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 // common::DType dispatcher
 // Calls f.template operator()<T>() based on runtime dtype.
@@ -58,6 +56,4 @@ TemplatedBody<std::decay_t<Body>> make_templated(Body&& body) {
     return {std::forward<Body>(body)};
 }
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

@@ -8,8 +8,7 @@
 #include <variant>
 #include <type_traits>
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 enum class ConstantOpType {
     FULL,  // fill a tensor of `shape` with one scalar
@@ -240,5 +239,4 @@ inline bool is_differentiable(const Op& op_v) {
     }, op_v);
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

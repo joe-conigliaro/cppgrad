@@ -6,8 +6,7 @@
 
 // Backends self-register at static-initialization time (see each backend's *_registration.{cpp,mm}).
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 std::mutex DeviceManager::_mutex;
 
@@ -63,5 +62,4 @@ void DeviceManager::init() {
     // set_default_device_type(DeviceType::CPU);
 }
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

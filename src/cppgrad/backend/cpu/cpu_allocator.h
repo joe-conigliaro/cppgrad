@@ -4,9 +4,7 @@
 
 #include "cppgrad/backend/allocator.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 class CPUAllocator : public Allocator {
 public:
@@ -19,6 +17,4 @@ public:
     void copy_device_to_device(Buffer& device_dst, const Buffer& device_src) const override;
 };
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

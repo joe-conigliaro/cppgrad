@@ -14,9 +14,7 @@
 #include <functional>
 #include <condition_variable>
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 // Simple thread pool (single shared queue).
 class ThreadPool {
@@ -242,6 +240,4 @@ inline T parallel_reduce(std::size_t n, EvalFn eval, CombineFn combine, T init) 
     return out;
 }
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

@@ -9,8 +9,7 @@
 #include "cppgrad/executor/executor.h"
 #include "cppgrad/backend/allocator.h"
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 class DeviceManager {
 public:
@@ -33,5 +32,4 @@ private:
     static std::mutex _mutex;
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

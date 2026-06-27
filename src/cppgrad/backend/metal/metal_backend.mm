@@ -14,9 +14,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 // Pack backend::View -> View32
 static inline void pack_view32(const backend::View &v, View32 &out) {
@@ -737,6 +735,4 @@ void MetalBackend::scatter_axis_op(const Buffer& base, const backend::View& bv,
     _impl->submit_scatter_axis_op(base, bv, values, vv, indices, out, ov, axis);
 }
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

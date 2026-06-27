@@ -14,8 +14,7 @@
 #include "cppgrad/backend/view.h"
 #include "cppgrad/utils/vector.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 static size_t generation_id() {
     return GraphContext::active() ? GraphContext::instance().generation() : 0;
@@ -1051,5 +1050,4 @@ void Tensor::backward() {
     }
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

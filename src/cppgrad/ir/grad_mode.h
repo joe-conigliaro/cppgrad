@@ -2,8 +2,7 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 struct GradMode {
     inline static thread_local bool enabled = true;
@@ -15,5 +14,4 @@ struct NoGradScope {
     ~NoGradScope() { GradMode::enabled = prev; }
 };
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

@@ -6,7 +6,7 @@
 
 #if __cplusplus >= 202002L
 #include <span>
-namespace cppgrad {
+namespace cppgrad::compat {
 template <typename T>
 using Span = std::span<T>;
 }
@@ -14,7 +14,7 @@ using Span = std::span<T>;
 #include <utility>
 #include <type_traits>
 
-namespace cppgrad {
+namespace cppgrad::compat {
 
 template <typename T>
 class Span {
@@ -49,5 +49,5 @@ public:
     size_type _size;
 };
 
-} // namespace cppgrad
+} // namespace cppgrad::compat
 #endif

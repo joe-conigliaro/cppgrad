@@ -6,9 +6,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 class MetalKernelCache {
 public:
@@ -22,6 +20,4 @@ private:
     std::unordered_map<std::string, id<MTLComputePipelineState>> _cache;
 };
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

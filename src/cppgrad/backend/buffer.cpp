@@ -3,8 +3,7 @@
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/backend/allocator.h"
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 Buffer::Buffer(void* data, size_t size_bytes, common::DType dtype, DeviceType device_type, Allocator* allocator)
     : _ptr(data), _size_bytes(size_bytes), _dtype(dtype), _device_type(device_type), _allocator(allocator) {}
@@ -15,5 +14,4 @@ Buffer::~Buffer() {
     }
 }
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

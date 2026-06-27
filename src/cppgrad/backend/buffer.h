@@ -7,8 +7,7 @@
 #include <cstddef>
 #include <memory>
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 // Forward declaration.
 class Allocator;
@@ -38,5 +37,4 @@ private:
     Allocator* _allocator;
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

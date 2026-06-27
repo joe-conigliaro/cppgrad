@@ -30,8 +30,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace cppgrad {
-namespace server {
+namespace cppgrad::server {
 
 using cppgrad::nn::llm::qwen::Qwen3Model;
 using cppgrad::nn::llm::qwen::Qwen3Config;
@@ -494,5 +493,4 @@ private:
     std::mutex gen_mutex_;              // serializes model use across HTTP worker threads
 };
 
-} // namespace server
-} // namespace cppgrad
+} // namespace cppgrad::server

@@ -5,8 +5,7 @@
 #include <random>
 #include <cstdint>
 
-namespace cppgrad {
-namespace utils {
+namespace cppgrad::utils {
 
 // Single global RNG for reproducibility.
 inline std::mt19937& global_rng() {
@@ -14,5 +13,4 @@ inline std::mt19937& global_rng() {
   return rng;
 }
 
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils

@@ -5,9 +5,7 @@
 #include "cppgrad/backend/cpu/cpu_allocator.h"
 #include "cppgrad/backend/buffer.h"
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 std::shared_ptr<Buffer> CPUAllocator::allocate(size_t num_elements, common::DType dtype) {
     size_t bytes = num_elements * size(dtype);
@@ -64,6 +62,4 @@ void CPUAllocator::copy_device_to_device(Buffer& device_dst, const Buffer& devic
     std::memcpy(device_dst.data(), device_src.data(), device_src.size_bytes());
 }
 
-} // namespace cpu
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::cpu

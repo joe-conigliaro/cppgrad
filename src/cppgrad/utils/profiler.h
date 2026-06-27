@@ -27,8 +27,7 @@
 #include <vector>
 #include <algorithm>
 
-namespace cppgrad {
-namespace utils {
+namespace cppgrad::utils {
 
 class Profiler {
 public:
@@ -99,5 +98,4 @@ private:
     std::chrono::steady_clock::time_point _t0;
 };
 
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils

@@ -4,8 +4,7 @@
 
 #include <memory>
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 // Forward declarations.
 class Backend;
@@ -41,5 +40,4 @@ private:
     std::unique_ptr<Allocator> _allocator;
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

@@ -4,8 +4,7 @@
 #include "cppgrad/ir/tensor_utils.h"
 #include "cppgrad/ir/ops.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 utils::Ref<Tensor> uniform(const std::vector<size_t>& shape, float min, float max, backend::DeviceType device_type, common::DType dtype) {
     return Tensor::make(RandomOp{RandomOpType::UNIFORM, UniformParams{min, max}}, {}, shape, device_type, dtype);
@@ -48,5 +47,4 @@ utils::Ref<Tensor> scalar_like(float v, const utils::Ref<const Tensor>& ref) {
     return scalar(v, ref->device_type(), ref->dtype());
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

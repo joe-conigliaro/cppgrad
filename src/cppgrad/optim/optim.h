@@ -7,8 +7,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/graph_context.h"
 
-namespace cppgrad {
-namespace optim {
+namespace cppgrad::optim {
 
 class Optimizer {
 public:
@@ -30,5 +29,4 @@ protected:
     float _lr;
 };
 
-} // namespace optim
-} // namespace cppgrad
+} // namespace cppgrad::optim

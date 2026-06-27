@@ -10,8 +10,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/parameter.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 class Module : public std::enable_shared_from_this<Module> {
 public:
@@ -100,5 +99,4 @@ private:
     std::map<std::string, std::shared_ptr<Module>> _named_modules;
 };
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

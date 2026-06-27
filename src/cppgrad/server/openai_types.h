@@ -12,8 +12,7 @@
 #include <random>
 #include <nlohmann/json.hpp>
 
-namespace cppgrad {
-namespace server {
+namespace cppgrad::server {
 
 // ---------------------------------------------------------------------------
 // Shared sub-objects
@@ -264,5 +263,4 @@ inline std::string random_suffix(size_t n = 24) {
 inline std::string generate_completion_id() { return "chatcmpl-" + random_suffix(); }
 inline std::string generate_tool_call_id() { return "call_" + random_suffix(); }
 
-} // namespace server
-} // namespace cppgrad
+} // namespace cppgrad::server

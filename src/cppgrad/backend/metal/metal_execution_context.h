@@ -9,9 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 // A single small `setBytes:` binding (inline so the work item is self-contained
 // and survives being copied into the pending-work queue - no dangling pointers).
@@ -86,6 +84,4 @@ private:
     std::vector<ComputeWork> _computeWork;
 };
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

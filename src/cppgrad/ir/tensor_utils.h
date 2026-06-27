@@ -11,8 +11,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/ops.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 template <typename T>
 inline utils::Ref<Tensor> from_vector(const std::vector<T>& data, const std::vector<size_t>& shape, cppgrad::backend::DeviceType device_type = cppgrad::backend::DeviceManager::default_device_type()) {
@@ -49,5 +48,4 @@ utils::Ref<Tensor> scalar(double value, cppgrad::backend::DeviceType device_type
 // Scalar with device/dtype taken from a reference tensor
 utils::Ref<Tensor> scalar_like(float v, const utils::Ref<const Tensor>& ref);
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

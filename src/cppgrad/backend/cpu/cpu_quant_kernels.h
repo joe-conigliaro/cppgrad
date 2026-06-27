@@ -17,9 +17,7 @@
 #include <cstdint>
 #include <cstddef>
 
-namespace cppgrad {
-namespace backend {
-namespace cpu {
+namespace cppgrad::backend::cpu {
 
 // out [M,N] = A [M,K] @ dequant(qweight)ᵀ, with per-group affine dequant.
 //   A        : [M, K]            row-major fp32 activations
@@ -58,6 +56,4 @@ inline void matmul_quant_affine_f32(const float* A, const uint32_t* qweight,
     }
 }
 
-}  // namespace cpu
-}  // namespace backend
-}  // namespace cppgrad
+} // namespace cppgrad::backend::cpu

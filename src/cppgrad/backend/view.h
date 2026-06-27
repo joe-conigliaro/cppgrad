@@ -8,8 +8,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/utils/shape.h"
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 constexpr uint32_t kMaxRank = 8;
 
@@ -114,5 +113,4 @@ struct View {
     }
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

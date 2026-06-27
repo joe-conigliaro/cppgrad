@@ -7,8 +7,7 @@
 #include "cppgrad/backend/device.h"
 #include "cppgrad/executor/executor.h"
 
-namespace cppgrad {
-namespace executor {
+namespace cppgrad::executor {
 
 void Executor::build_schedule_dfs(
     const utils::Ref<const ir::Tensor>& t,
@@ -50,5 +49,4 @@ Executor::build_device_schedules(
     return schedules;
 }
 
-} // namespace executor
-} // namespace cppgrad
+} // namespace cppgrad::executor

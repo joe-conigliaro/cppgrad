@@ -7,8 +7,7 @@
 
 #include "cppgrad/common/dtype.h"
 
-namespace cppgrad {
-namespace common {
+namespace cppgrad::common { 
 
 // Host-side bfloat16: the top 16 bits of an IEEE-754 fp32 (1 sign, 8 exponent, 7 mantissa). Same
 // bit layout as Metal's native `bfloat`, so device kernels and host code agree on stored bytes.
@@ -44,5 +43,4 @@ static_assert(sizeof(bfloat16) == 2, "bfloat16 must be 2 bytes");
 // Hook bfloat16 into the runtime dtype machinery (dtype_of / dtype_v were UNKNOWN for it).
 template<> constexpr DType dtype_of<bfloat16>() { return DType::BFLOAT16; }
 
-} // namespace common
-} // namespace cppgrad
+} // namespace cppgrad::common

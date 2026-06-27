@@ -8,8 +8,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 class Buffer;
 
@@ -114,5 +113,4 @@ public:
     virtual void rand_normal(Buffer &out, float mean, float stddev) const = 0;
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

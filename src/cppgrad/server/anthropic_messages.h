@@ -23,9 +23,7 @@
 
 #include "cppgrad/server/chat_server.h"
 
-namespace cppgrad {
-namespace server {
-namespace anthropic {
+namespace cppgrad::server::anthropic {
 
 using cppgrad::io::ChatMessage;
 using cppgrad::io::ChatTool;
@@ -214,6 +212,4 @@ inline void handle_messages_stream(ChatServer& server, const Request& req,
     event("message_stop", {{"type", "message_stop"}});
 }
 
-} // namespace anthropic
-} // namespace server
-} // namespace cppgrad
+} // namespace cppgrad::server::anthropic

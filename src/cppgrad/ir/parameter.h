@@ -11,8 +11,7 @@
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/utils/ref.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 // Create a leaf parameter. Storage can be allocated now or deferred until first assign or eval.
 inline utils::Ref<Tensor> parameter(const std::vector<size_t>& shape,
@@ -99,5 +98,4 @@ inline utils::Ref<ir::Tensor> trainable_from(const utils::Ref<ir::Tensor>& init)
     return ir::parameterize(init);
 }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

@@ -8,8 +8,7 @@
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/backend/device_manager.h"
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 inline void copy(Buffer& dst, const Buffer& src) {
     if (src.size_bytes() == 0 || src.data() == dst.data()) return;
@@ -32,5 +31,4 @@ inline void copy(Buffer& dst, const Buffer& src) {
     dst_dev->allocator()->copy_host_to_device(dst, host.data());
 }
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

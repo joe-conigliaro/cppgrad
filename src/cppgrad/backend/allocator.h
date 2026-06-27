@@ -5,8 +5,7 @@
 #include <memory>
 #include "cppgrad/common/dtype.h"
 
-namespace cppgrad {
-namespace backend {
+namespace cppgrad::backend {
 
 class Buffer;
 
@@ -23,5 +22,4 @@ public:
     virtual void copy_device_to_device(Buffer& device_dst, const Buffer& device_src) const = 0;
 };
 
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend

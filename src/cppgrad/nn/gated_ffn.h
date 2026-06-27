@@ -6,8 +6,7 @@
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/module.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 /* GatedFFN - gated feed-forward network: inner_act(x @ gate_proj) * (x @ up_proj) @ down_proj
  *
@@ -78,5 +77,4 @@ private:
     InnerAct _inner_act;
 };
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

@@ -9,9 +9,7 @@
 #include <algorithm>
 #include <functional>
 
-namespace cppgrad {
-namespace utils {
-namespace vector {
+namespace cppgrad::utils::vector {
 
 namespace detail {
 template<typename T>
@@ -38,6 +36,4 @@ inline size_t numel(const std::vector<size_t>& shape) {
     return std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
 }
 
-} // namespace vector
-} // namespace utils
-} // namespace cppgrad
+} // namespace cppgrad::utils::vector

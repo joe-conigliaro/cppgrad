@@ -9,8 +9,7 @@
 #include "cppgrad/ir/tensor_operators.h"
 #include "cppgrad/optim/optim.h"
 
-namespace cppgrad {
-namespace optim {
+namespace cppgrad::optim {
 
 // AdamW: Decoupled Weight Decay Regularization (Loshchilov & Hutter, 2019)
 // Update:
@@ -42,5 +41,4 @@ protected:
     }
 };
 
-} // namespace optim
-} // namespace cppgrad
+} // namespace cppgrad::optim

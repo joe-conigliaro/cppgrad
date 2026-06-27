@@ -22,9 +22,7 @@
 #include "cppgrad/backend/view.h"
 #include "cppgrad/ir/tensor.h"
 
-namespace cppgrad {
-namespace executor {
-namespace interpreter {
+namespace cppgrad::executor::interpreter {
 
 std::shared_ptr<backend::Buffer> InterpreterExecutor::realize(const utils::Ref<const cppgrad::ir::Tensor>& out) {
     if (!out) return nullptr;
@@ -333,6 +331,4 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule>& s
     }
 }
 
-} // namespace interpreter
-} // namespace executor
-} // namespace cppgrad
+} // namespace cppgrad::executor::interpreter

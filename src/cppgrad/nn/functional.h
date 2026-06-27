@@ -12,9 +12,7 @@
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor.h"
 
-namespace cppgrad {
-namespace nn {
-namespace functional {
+namespace cppgrad::nn::functional {
 
 enum class Reduction {
     NONE,
@@ -701,6 +699,4 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
     return o;  // [BH,S,dv]
 }
 
-} // namespace functional
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn::functional

@@ -29,8 +29,7 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
 
-namespace cppgrad {
-namespace io {
+namespace cppgrad::io {
 
 class BPETokenizer {
 public:
@@ -241,5 +240,4 @@ private:
     }
 };
 
-}  // namespace io
-}  // namespace cppgrad
+} // namespace cppgrad::io

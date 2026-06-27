@@ -5,8 +5,7 @@
 #include "cppgrad/nn/module.h"
 #include "cppgrad/nn/activations.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 class MLP : public Module {
 public:
@@ -14,5 +13,4 @@ public:
     ~MLP() override;
 };
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

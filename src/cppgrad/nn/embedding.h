@@ -11,8 +11,7 @@
 #include "cppgrad/ir/parameter.h"
 #include "cppgrad/backend/device_manager.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 class Embedding : public Module {
 public:
@@ -32,5 +31,4 @@ public:
     }
 };
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad:nn

@@ -9,8 +9,7 @@
 #include "cppgrad/utils/shape.h"
 #include "cppgrad/utils/vector.h"
 
-namespace cppgrad {
-namespace ir {
+namespace cppgrad::ir {
 
 // Helpers
 
@@ -363,5 +362,4 @@ utils::Ref<Tensor> mul(float val, const utils::Ref<const Tensor>& a) { return mu
 utils::Ref<Tensor> div(float val, const utils::Ref<const Tensor>& a) { return div(scalar_like(val, a), a); }
 utils::Ref<Tensor> pow(float val, const utils::Ref<const Tensor>& a) { return pow(scalar_like(val, a), a); }
 
-} // namespace ir
-} // namespace cppgrad
+} // namespace cppgrad::ir

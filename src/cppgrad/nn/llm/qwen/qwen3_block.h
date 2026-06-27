@@ -19,10 +19,7 @@
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/gated_ffn.h"
 
-namespace cppgrad {
-namespace nn {
-namespace llm {
-namespace qwen {
+namespace cppgrad::nn::llm::qwen {
 
 // Unified Qwen3 transformer block supporting both full attention (Qwen3) and
 // linear attention (Qwen3.5/3.6 SSM-style) layers.
@@ -559,7 +556,4 @@ private:
     utils::Ref<ir::Tensor> _last_v;
 };
 
-} // namespace qwen
-} // namespace llm
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn::llm::qwen

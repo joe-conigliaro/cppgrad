@@ -6,8 +6,7 @@
 #include <cstdint>
 #include <type_traits>
 
-namespace cppgrad {
-namespace common {
+namespace cppgrad::common { 
 
 enum class DType {
     INT8,
@@ -98,5 +97,4 @@ constexpr DType dtype_of() {
 template<typename T>
 constexpr DType dtype_v = dtype_of<T>();
 
-} // namespace common
-} // namespace cppgrad
+} // namespace cppgrad::common

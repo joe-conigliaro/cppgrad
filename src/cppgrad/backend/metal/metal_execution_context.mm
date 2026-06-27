@@ -7,9 +7,7 @@
 #include "cppgrad/backend/metal/metal_execution_context.h"
 #include "cppgrad/utils/profiler.h"
 
-namespace cppgrad {
-namespace backend {
-namespace metal {
+namespace cppgrad::backend::metal {
 
 MetalExecutionContext::MetalExecutionContext(void* native_device, void* native_queue)
     : _device((__bridge id<MTLDevice>)native_device),
@@ -104,6 +102,4 @@ void MetalExecutionContext::flush() {
     if (!_commandBuffer) _commandBuffer = [_queue commandBuffer];
 }
 
-} // namespace metal
-} // namespace backend
-} // namespace cppgrad
+} // namespace cppgrad::backend::metal

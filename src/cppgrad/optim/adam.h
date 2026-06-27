@@ -10,8 +10,7 @@
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/optim/optim.h"
 
-namespace cppgrad {
-namespace optim {
+namespace cppgrad::optim {
 
 class Adam : public Optimizer {
 public:
@@ -82,5 +81,4 @@ private:
     std::vector<utils::Ref<ir::Tensor>> _m, _v;
 };
 
-} // namespace optim
-} // namespace cppgrad
+} // namespace cppgrad::optim

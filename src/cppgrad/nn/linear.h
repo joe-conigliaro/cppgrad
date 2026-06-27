@@ -13,8 +13,7 @@
 #include "cppgrad/ir/ops.h" // ir::QuantParams
 #include "cppgrad/backend/device_manager.h"
 
-namespace cppgrad {
-namespace nn {
+namespace cppgrad::nn {
 
 enum class Init { Default, KaimingUniform, KaimingNormal, XavierUniform, XavierNormal };
 
@@ -119,5 +118,4 @@ private:
     bool _use_bias = true;
 };
 
-} // namespace nn
-} // namespace cppgrad
+} // namespace cppgrad::nn
