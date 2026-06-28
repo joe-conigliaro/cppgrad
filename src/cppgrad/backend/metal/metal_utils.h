@@ -3,14 +3,16 @@
 #pragma once
 
 #import <Metal/Metal.h>
+
 #include <stdexcept>
+
 #include "cppgrad/backend/buffer.h"
 
 namespace cppgrad::backend::metal {
 
 // Safely casts the generic void* from a Buffer to the concrete id<MTLBuffer> type.
 // This is the designated way for Metal backend code to access the underlying buffer object.
-inline id<MTLBuffer> as_mtl(const Buffer& buf) {
+inline id<MTLBuffer> as_mtl(const Buffer &buf) {
     // We use a direct __bridge cast because the Buffer's void* was created
     // with __bridge_retained, and its lifetime is managed by the Buffer's destructor
     // calling deallocate, which does a CFBridgingRelease.
@@ -18,7 +20,7 @@ inline id<MTLBuffer> as_mtl(const Buffer& buf) {
     return (__bridge id<MTLBuffer>)buf.data();
 }
 
-inline id<MTLBuffer> as_mtl_checked(const Buffer& buf) {
+inline id<MTLBuffer> as_mtl_checked(const Buffer &buf) {
     if (buf.device_type() != DeviceType::METAL) {
         throw std::runtime_error("as_mtl_checked: not a METAL buffer");
     }

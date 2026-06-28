@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
+#include "cppgrad/backend/device_manager.h"
+
 #include <iostream>
 #include <stdexcept>
-#include "cppgrad/backend/device_manager.h"
 
 // Backends self-register at static-initialization time (see each backend's *_registration.{cpp,mm}).
 
@@ -10,13 +11,13 @@ namespace cppgrad::backend {
 
 std::mutex DeviceManager::_mutex;
 
-DeviceManager& DeviceManager::instance() {
+DeviceManager &DeviceManager::instance() {
     static DeviceManager inst;
     return inst;
 }
 
-Device* DeviceManager::device(DeviceType type) {
-    auto& inst = instance();
+Device *DeviceManager::device(DeviceType type) {
+    auto &inst = instance();
     auto it = inst._devices.find(type);
     if (it == inst._devices.end()) {
         return nullptr;
@@ -25,17 +26,18 @@ Device* DeviceManager::device(DeviceType type) {
 }
 
 void DeviceManager::set_default_device_type(DeviceType device_type) {
-    auto& inst = instance();
+    auto &inst = instance();
     std::lock_guard<std::mutex> lock(_mutex);
     if (inst._devices.find(device_type) == inst._devices.end()) {
-        throw std::runtime_error("Cannot set default device to an unregistered device type: " + std::string(to_string(device_type)));
+        throw std::runtime_error("Cannot set default device to an unregistered device type: " +
+                                 std::string(to_string(device_type)));
     }
     inst._default_device_type = device_type;
     std::cout << "Default device set to: " << to_string(device_type) << std::endl;
 }
 
 DeviceType DeviceManager::default_device_type() {
-    auto& inst = instance();
+    auto &inst = instance();
     std::lock_guard<std::mutex> lock(_mutex);
     return inst._default_device_type;
 }

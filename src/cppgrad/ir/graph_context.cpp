@@ -1,34 +1,39 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
 #include "cppgrad/ir/graph_context.h"
-#include "cppgrad/executor/interpreter/interpreter_executor.h"
-#include "cppgrad/backend/device_manager.h"
-#include "cppgrad/backend/device.h"
+
 #include "cppgrad/backend/backend.h"
+#include "cppgrad/backend/device.h"
+#include "cppgrad/backend/device_manager.h"
+#include "cppgrad/executor/interpreter/interpreter_executor.h"
 
 namespace cppgrad::ir {
 
-GraphContext& GraphContext::instance() {
+GraphContext &GraphContext::instance() {
     static thread_local GraphContext ctx;
     return ctx;
 }
 
 thread_local int GraphContext::s_scope_depth = 0;
 
-void GraphContext::schedule_realization(const utils::Ref<const Tensor>& t) {
-    if (!t) return;
+void GraphContext::schedule_realization(const utils::Ref<const Tensor> &t) {
+    if (!t)
+        return;
 
     // Already realized => nothing to do.
-    if (t->realized_buffer()) return;
+    if (t->realized_buffer())
+        return;
 
-    if (t->_last_enqueued_token == _generation) return;
+    if (t->_last_enqueued_token == _generation)
+        return;
     t->_last_enqueued_token = _generation;
 
     _to_realize.push_back(t);
 }
 
 void GraphContext::realize_all() {
-    if (_to_realize.empty()) return;
+    if (_to_realize.empty())
+        return;
 
     executor::interpreter::InterpreterExecutor executor;
     executor.realize_many(_to_realize);
@@ -42,13 +47,14 @@ void GraphContext::reset() {
 
     _generation++;
     // overflow wrap around (unlikely to be reached)
-    if (_generation == 0) _generation = 1;
+    if (_generation == 0)
+        _generation = 1;
 }
 
 // Commit any work the default device has batched (e.g. Metal's execution context),
 // so a scope's GPU work completes at the scope boundary like the CPU backend does.
 static void flush_default_backend() {
-    if (auto* dev = backend::DeviceManager::device(backend::DeviceManager::default_device_type())) {
+    if (auto *dev = backend::DeviceManager::device(backend::DeviceManager::default_device_type())) {
         dev->backend()->flush_pending();
     }
 }

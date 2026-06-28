@@ -1,10 +1,11 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include <vector>
 #include <cassert>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
+#include <vector>
+
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/common/dtype.h"
 #include "cppgrad/ir/tensor.h"
@@ -25,7 +26,8 @@ static void test_deep_copy() {
     auto out = t->to_vector<float>();
     EXPECT_TRUE(out.size() == 3, "size should be 3");
     EXPECT_TRUE(out[0] == 1.f && out[1] == 2.f && out[2] == 3.f, "buffer must be a deep copy");
-    if (g_fail_count == 0) std::cout << "[PASS] deep copy behavior\n";
+    if (g_fail_count == 0)
+        std::cout << "[PASS] deep copy behavior\n";
 }
 
 static void test_zero_length() {
@@ -37,7 +39,8 @@ static void test_zero_length() {
     EXPECT_TRUE(t->numel() == 0, "numel must be 0 for empty tensor");
     auto out = t->to_vector<float>();
     EXPECT_TRUE(out.empty(), "to_vector must return empty vector");
-    if (g_fail_count == 0) std::cout << "[PASS] zero-length behavior\n";
+    if (g_fail_count == 0)
+        std::cout << "[PASS] zero-length behavior\n";
 }
 
 int main() {
@@ -54,7 +57,7 @@ int main() {
             std::cerr << "\nCPU ALLOCATOR TESTS FAILED: " << g_fail_count << "\n";
             return 1;
         }
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "\nEXCEPTION: " << e.what() << "\n";
         return 2;
     }

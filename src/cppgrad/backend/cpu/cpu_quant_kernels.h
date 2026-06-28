@@ -14,8 +14,8 @@
 // The 8-bit codes are packed 4-per-uint32 (little-endian byte order) -> qweight is [N, K/4] u32.
 // Weights are stored [N=out_features, K=in_features] (PyTorch/MLX nn.Linear layout), so the matmul
 // computes  out = A @ Wᵀ :   out[m,n] = sum_k A[m,k] * w[n,k].
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 
 namespace cppgrad::backend::cpu {
 
@@ -25,22 +25,21 @@ namespace cppgrad::backend::cpu {
 //   scales   : [N, K/group_size] row-major fp32 (convert bf16->fp32 at the call site)
 //   biases   : [N, K/group_size] row-major fp32
 //   out      : [M, N]            row-major fp32
-inline void matmul_quant_affine_f32(const float* A, const uint32_t* qweight,
-                                    const float* scales, const float* biases, float* out,
-                                    size_t M, size_t N, size_t K, int group_size) {
-    const size_t G  = K / static_cast<size_t>(group_size);  // groups per row
-    const size_t Kp = K / 4;                                 // packed words per row
+inline void matmul_quant_affine_f32(const float *A, const uint32_t *qweight, const float *scales, const float *biases,
+                                    float *out, size_t M, size_t N, size_t K, int group_size) {
+    const size_t G = K / static_cast<size_t>(group_size); // groups per row
+    const size_t Kp = K / 4;                              // packed words per row
     for (size_t n = 0; n < N; ++n) {
-        const uint32_t* wrow = qweight + n * Kp;
-        const float*    srow = scales  + n * G;
-        const float*    brow = biases  + n * G;
+        const uint32_t *wrow = qweight + n * Kp;
+        const float *srow = scales + n * G;
+        const float *brow = biases + n * G;
         for (size_t m = 0; m < M; ++m) {
-            const float* arow = A + m * K;
+            const float *arow = A + m * K;
             float acc = 0.0f;
             for (size_t g = 0; g < G; ++g) {
                 const float s = srow[g], b = brow[g];
                 const size_t k0 = g * static_cast<size_t>(group_size);
-                float ga = 0.0f, gq = 0.0f;   // sum(a) and sum(a*q) within the group
+                float ga = 0.0f, gq = 0.0f; // sum(a) and sum(a*q) within the group
                 for (int j = 0; j < group_size; ++j) {
                     const size_t k = k0 + static_cast<size_t>(j);
                     const uint32_t word = wrow[k >> 2];
@@ -49,7 +48,7 @@ inline void matmul_quant_affine_f32(const float* A, const uint32_t* qweight,
                     gq += a * static_cast<float>(q);
                     ga += a;
                 }
-                acc += s * gq + b * ga;       // sum_k a*(s*q + b), factored per group
+                acc += s * gq + b * ga; // sum_k a*(s*q + b), factored per group
             }
             out[m * N + n] = acc;
         }

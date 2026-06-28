@@ -2,27 +2,26 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <cmath>
 #include <array>
-#include <vector>
+#include <cmath>
 #include <numeric>
 #include <stdexcept>
-#include "cppgrad/ir/tensor_operators.h"
-#include "cppgrad/ir/tensor_utils.h"
-#include "cppgrad/ir/tensor_ops.h"
-#include "cppgrad/ir/tensor.h"
+#include <vector>
+
 #include "cppgrad/ir/grad_mode.h"
+#include "cppgrad/ir/tensor.h"
+#include "cppgrad/ir/tensor_operators.h"
+#include "cppgrad/ir/tensor_ops.h"
+#include "cppgrad/ir/tensor_utils.h"
 
 namespace cppgrad::nn::functional {
 
-enum class Reduction {
-    NONE,
-    MEAN,
-    SUM
-};
+enum class Reduction { NONE, MEAN, SUM };
 
-inline utils::Ref<ir::Tensor> reduce(const utils::Ref<ir::Tensor>& in, Reduction reduction, const std::vector<int>& axes = {}, bool keep_dims = false) {
-    if (reduction == Reduction::NONE) return in;
+inline utils::Ref<ir::Tensor> reduce(const utils::Ref<ir::Tensor> &in, Reduction reduction,
+                                     const std::vector<int> &axes = {}, bool keep_dims = false) {
+    if (reduction == Reduction::NONE)
+        return in;
 
     // If axes are not specified, reduce over all dimensions
     std::vector<int> reduce_axes = axes;
@@ -31,27 +30,31 @@ inline utils::Ref<ir::Tensor> reduce(const utils::Ref<ir::Tensor>& in, Reduction
         std::iota(reduce_axes.begin(), reduce_axes.end(), 0);
     }
 
-    if (reduction == Reduction::MEAN) return ir::mean(in, reduce_axes, keep_dims);
-    if (reduction == Reduction::SUM) return ir::sum(in, reduce_axes, keep_dims);
+    if (reduction == Reduction::MEAN)
+        return ir::mean(in, reduce_axes, keep_dims);
+    if (reduction == Reduction::SUM)
+        return ir::sum(in, reduce_axes, keep_dims);
 
     throw std::runtime_error("Unhandled reduction type");
 }
 
-inline utils::Ref<ir::Tensor> mse_loss(const utils::Ref<ir::Tensor>& y_pred, const utils::Ref<ir::Tensor>& y_true, Reduction reduction = Reduction::MEAN) {
+inline utils::Ref<ir::Tensor> mse_loss(const utils::Ref<ir::Tensor> &y_pred, const utils::Ref<ir::Tensor> &y_true,
+                                       Reduction reduction = Reduction::MEAN) {
     auto diff = y_pred - y_true;
     auto squared_diff = diff * diff;
     return reduce(squared_diff, reduction);
 }
 
 // Standard hinge loss, y_true in {+1, -1}
-inline utils::Ref<ir::Tensor> hinge_loss(const utils::Ref<ir::Tensor>& logits, const utils::Ref<ir::Tensor>& y_true, float margin = 1.0f, Reduction reduction = Reduction::MEAN) {
+inline utils::Ref<ir::Tensor> hinge_loss(const utils::Ref<ir::Tensor> &logits, const utils::Ref<ir::Tensor> &y_true,
+                                         float margin = 1.0f, Reduction reduction = Reduction::MEAN) {
     // loss = relu(margin - y_true * logits)
     auto loss_per_item = ir::relu(margin - (y_true * logits));
     return reduce(loss_per_item, reduction);
 }
 
 // Stable softplus: log(1 + exp(x))
-inline utils::Ref<ir::Tensor> softplus(const utils::Ref<ir::Tensor>& x) {
+inline utils::Ref<ir::Tensor> softplus(const utils::Ref<ir::Tensor> &x) {
     // This is a stable implementation: softplus(x) = max(0, x) + log(1 + exp(-|x|))
     auto relu_x = ir::relu(x);
     auto abs_x = ir::relu(x) + ir::relu(ir::neg(x));
@@ -62,22 +65,27 @@ inline utils::Ref<ir::Tensor> softplus(const utils::Ref<ir::Tensor>& x) {
 // BCE with logits: targets in {0,1}. Stable formulation:
 // loss(z, y) = softplus(z) - z*y
 // This is mathematically equivalent to the more complex version but simpler to express.
-inline utils::Ref<ir::Tensor> bce_with_logits(const utils::Ref<ir::Tensor>& logits, const utils::Ref<ir::Tensor>& targets, Reduction reduction = Reduction::MEAN) {
+inline utils::Ref<ir::Tensor> bce_with_logits(const utils::Ref<ir::Tensor> &logits,
+                                              const utils::Ref<ir::Tensor> &targets,
+                                              Reduction reduction = Reduction::MEAN) {
     auto loss_per_item = softplus(logits) - (logits * targets);
     return reduce(loss_per_item, reduction);
 }
 
 // Logistic loss (margin targets): targets in {-1, +1}. Stable softplus form:
 // loss(z, y) = softplus(-(y*z))
-inline utils::Ref<ir::Tensor> logistic_loss_pm1(const utils::Ref<ir::Tensor>& logits, const utils::Ref<ir::Tensor>& targets_pm1, Reduction reduction = Reduction::MEAN) {
+inline utils::Ref<ir::Tensor> logistic_loss_pm1(const utils::Ref<ir::Tensor> &logits,
+                                                const utils::Ref<ir::Tensor> &targets_pm1,
+                                                Reduction reduction = Reduction::MEAN) {
     auto neg_yz = ir::neg(targets_pm1 * logits);
     auto loss_per_item = softplus(neg_yz);
     return reduce(loss_per_item, reduction);
 }
 
-inline utils::Ref<ir::Tensor> softmax(const utils::Ref<ir::Tensor>& logits, int axis = -1) {
+inline utils::Ref<ir::Tensor> softmax(const utils::Ref<ir::Tensor> &logits, int axis = -1) {
     int nd = static_cast<int>(logits->shape().size());
-    if (axis < 0) axis += nd;
+    if (axis < 0)
+        axis += nd;
     auto m = ir::max(logits, {axis}, true);
     auto z_shifted = logits - m;
     auto exp_z = ir::exp(z_shifted);
@@ -85,16 +93,19 @@ inline utils::Ref<ir::Tensor> softmax(const utils::Ref<ir::Tensor>& logits, int 
     return exp_z / denom;
 }
 
-inline utils::Ref<ir::Tensor> log_softmax(const utils::Ref<ir::Tensor>& logits, int axis = -1) {
+inline utils::Ref<ir::Tensor> log_softmax(const utils::Ref<ir::Tensor> &logits, int axis = -1) {
     int nd = static_cast<int>(logits->shape().size());
-    if (axis < 0) axis += nd;
+    if (axis < 0)
+        axis += nd;
     auto m = ir::max(logits, {axis}, true);
     auto z_shifted = logits - m;
     auto logsumexp = ir::log(ir::sum(ir::exp(z_shifted), {axis}, true));
     return z_shifted - logsumexp;
 }
 
-inline utils::Ref<ir::Tensor> softmax_cross_entropy_with_logits(const utils::Ref<ir::Tensor>& logits, const utils::Ref<ir::Tensor>& targets_onehot, Reduction reduction = Reduction::MEAN) {
+inline utils::Ref<ir::Tensor> softmax_cross_entropy_with_logits(const utils::Ref<ir::Tensor> &logits,
+                                                                const utils::Ref<ir::Tensor> &targets_onehot,
+                                                                Reduction reduction = Reduction::MEAN) {
     int nd = static_cast<int>(logits->shape().size());
     int axis = nd - 1;
     auto lsm = log_softmax(logits, axis);
@@ -102,24 +113,20 @@ inline utils::Ref<ir::Tensor> softmax_cross_entropy_with_logits(const utils::Ref
     return reduce(per_sample_loss, reduction);
 }
 
-inline utils::Ref<ir::Tensor> relu(const utils::Ref<ir::Tensor>& input) {
-    return ir::relu(input);
+inline utils::Ref<ir::Tensor> relu(const utils::Ref<ir::Tensor> &input) { return ir::relu(input); }
+
+inline utils::Ref<ir::Tensor> tanh(const utils::Ref<ir::Tensor> &input) { return ir::tanh(input); }
+
+inline utils::Ref<ir::Tensor> sigmoid(const utils::Ref<ir::Tensor> &x) {
+    return ir::sigmoid(x); // fused 1/(1+e^-x): one kernel/pass instead of neg+exp+add+div
 }
 
-inline utils::Ref<ir::Tensor> tanh(const utils::Ref<ir::Tensor>& input) {
-    return ir::tanh(input);
-}
-
-inline utils::Ref<ir::Tensor> sigmoid(const utils::Ref<ir::Tensor>& x) {
-    return ir::sigmoid(x);   // fused 1/(1+e^-x): one kernel/pass instead of neg+exp+add+div
-}
-
-inline utils::Ref<ir::Tensor> silu(const utils::Ref<ir::Tensor>& x) {
-    return ir::silu(x);      // fused x*sigmoid(x): one kernel/pass instead of neg+exp+add+div+mul
+inline utils::Ref<ir::Tensor> silu(const utils::Ref<ir::Tensor> &x) {
+    return ir::silu(x); // fused x*sigmoid(x): one kernel/pass instead of neg+exp+add+div+mul
 }
 
 // GELU (fast approximation): 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-inline utils::Ref<ir::Tensor> gelu(const utils::Ref<ir::Tensor>& x) {
+inline utils::Ref<ir::Tensor> gelu(const utils::Ref<ir::Tensor> &x) {
     // tanh_arg = sqrt(2/pi) * (x + 0.044715 * x^3)
     auto x3 = x * x * x;
     auto tanh_arg = ir::scalar_like(0.79788456f, x) * (x + ir::scalar_like(0.044715f, x) * x3);
@@ -128,9 +135,10 @@ inline utils::Ref<ir::Tensor> gelu(const utils::Ref<ir::Tensor>& x) {
 
 // Expand tensor by adding singleton dimensions at the end until it reaches target_rank.
 // e.g., {B, S} with target_rank=4 -> {B, S, 1, 1}
-static utils::Ref<ir::Tensor> expand_dims_to(const utils::Ref<ir::Tensor>& t, size_t target_rank) {
+static utils::Ref<ir::Tensor> expand_dims_to(const utils::Ref<ir::Tensor> &t, size_t target_rank) {
     size_t cur_rank = t->shape().size();
-    if (cur_rank >= target_rank) return t;
+    if (cur_rank >= target_rank)
+        return t;
     std::vector<size_t> new_shape = t->shape();
     new_shape.resize(target_rank, 1);
     return ir::reshape(t, new_shape);
@@ -138,7 +146,8 @@ static utils::Ref<ir::Tensor> expand_dims_to(const utils::Ref<ir::Tensor>& t, si
 
 // RMSNorm: output = x * (1 + weight) * rsqrt(mean(x^2) + eps)
 // weight: [D], x: [..., D], norm over last axis
-inline utils::Ref<ir::Tensor> rms_norm(const utils::Ref<ir::Tensor>& x, const utils::Ref<ir::Tensor>& weight, float eps = 1e-5f) {
+inline utils::Ref<ir::Tensor> rms_norm(const utils::Ref<ir::Tensor> &x, const utils::Ref<ir::Tensor> &weight,
+                                       float eps = 1e-5f) {
     // Inference fast path: a single fused kernel (reduce+normalize in one pass) when x is dense
     // row-major (offset 0). Training (grad mode) and strided inputs use the differentiable composite.
     if (!ir::GradMode::enabled && x->access_meta().contiguous && x->access_meta().offset == 0) {
@@ -160,11 +169,8 @@ inline utils::Ref<ir::Tensor> rms_norm(const utils::Ref<ir::Tensor>& x, const ut
 // x: [..., head_dim], inv_freq: [head_dim/2] precomputed as log(10000) + 2*log(arange)/head_dim
 // positions: position ids - any shape whose numel is the sequence length (e.g., [S], [1, S], [B, S])
 // Returns x with rotation applied. Last dim must be even.
-inline utils::Ref<ir::Tensor> apply_rope(
-    const utils::Ref<ir::Tensor>& x,
-    const utils::Ref<ir::Tensor>& positions,
-    const utils::Ref<ir::Tensor>& inv_freq)
-{
+inline utils::Ref<ir::Tensor> apply_rope(const utils::Ref<ir::Tensor> &x, const utils::Ref<ir::Tensor> &positions,
+                                         const utils::Ref<ir::Tensor> &inv_freq) {
     auto shape = x->shape();
     size_t head_dim = shape.back();
     size_t half_d = head_dim / 2;
@@ -178,10 +184,10 @@ inline utils::Ref<ir::Tensor> apply_rope(
     auto pos_expanded = expand_dims_to(positions, shape.size());
     auto pos_b = ir::broadcast(pos_expanded, theta_shape);
     auto freq_b = ir::broadcast(inv_freq, theta_shape);
-    auto theta = pos_b * freq_b;  // same shape as x but last dim = half_d
+    auto theta = pos_b * freq_b; // same shape as x but last dim = half_d
 
-    auto cos_t = ir::cos(theta);  // [batch, seq, heads, head_dim/2]
-    auto sin_t = ir::sin(theta);  // [batch, seq, heads, head_dim/2]
+    auto cos_t = ir::cos(theta); // [batch, seq, heads, head_dim/2]
+    auto sin_t = ir::sin(theta); // [batch, seq, heads, head_dim/2]
 
     // Split x into first half and second half along last dim
     // x: [..., head_dim] -> x1: [..., head_dim/2], x2: [..., head_dim/2]
@@ -205,13 +211,9 @@ inline utils::Ref<ir::Tensor> apply_rope(
 // x: [..., head_dim], positions: position ids, inv_freq: [num_rotary_pairs]
 // partial_rotary_factor: fraction of head_dim to rotate (e.g., 0.25)
 // interleaved: if true, spread rotated dims evenly across head_dim
-inline utils::Ref<ir::Tensor> apply_mrope(
-    const utils::Ref<ir::Tensor>& x,
-    const utils::Ref<ir::Tensor>& positions,
-    const utils::Ref<ir::Tensor>& inv_freq,
-    float partial_rotary_factor = 1.0f,
-    bool interleaved = false)
-{
+inline utils::Ref<ir::Tensor> apply_mrope(const utils::Ref<ir::Tensor> &x, const utils::Ref<ir::Tensor> &positions,
+                                          const utils::Ref<ir::Tensor> &inv_freq, float partial_rotary_factor = 1.0f,
+                                          bool interleaved = false) {
     auto shape = x->shape();
     size_t head_dim = shape.back();
     size_t num_pairs = inv_freq->numel();
@@ -240,7 +242,8 @@ inline utils::Ref<ir::Tensor> apply_mrope(
         std::vector<size_t> begin1(shape.size(), 0), end1(shape.begin(), shape.end());
         end1.back() = num_pairs;
         std::vector<size_t> begin2(shape.size(), 0), end2(shape.begin(), shape.end());
-        begin2.back() = num_pairs; end2.back() = rot_dim;
+        begin2.back() = num_pairs;
+        end2.back() = rot_dim;
         auto x1 = ir::slice(x, begin1, end1);
         auto x2 = ir::slice(x, begin2, end2);
 
@@ -284,7 +287,7 @@ inline utils::Ref<ir::Tensor> apply_mrope(
 // Repeat KV heads for Grouped Query Attention
 // x: [batch, seq, num_kv_heads, head_dim] -> [batch, seq, num_heads, head_dim]
 // n_rep = num_heads / num_kv_heads
-inline utils::Ref<ir::Tensor> repeat_kv(const utils::Ref<ir::Tensor>& x, size_t n_rep) {
+inline utils::Ref<ir::Tensor> repeat_kv(const utils::Ref<ir::Tensor> &x, size_t n_rep) {
     auto shape = x->shape();
     // shape: [B, S, n_kv_heads, head_dim]
     int nd = static_cast<int>(shape.size());
@@ -307,35 +310,34 @@ inline utils::Ref<ir::Tensor> repeat_kv(const utils::Ref<ir::Tensor>& x, size_t 
 
 // Scaled dot-product attention with causal mask
 // q: [B, S, n_heads, head_dim], k: [B, S_kv, n_heads, head_dim], v: [B, S_kv, n_heads, head_dim]
-inline utils::Ref<ir::Tensor> scaled_dot_product_attention(
-    const utils::Ref<ir::Tensor>& q,
-    const utils::Ref<ir::Tensor>& k,
-    const utils::Ref<ir::Tensor>& v,
-    const utils::Ref<ir::Tensor>& mask = nullptr) {
+inline utils::Ref<ir::Tensor> scaled_dot_product_attention(const utils::Ref<ir::Tensor> &q,
+                                                           const utils::Ref<ir::Tensor> &k,
+                                                           const utils::Ref<ir::Tensor> &v,
+                                                           const utils::Ref<ir::Tensor> &mask = nullptr) {
     auto q_shape = q->shape();
     size_t head_dim = q_shape.back();
     float scale = 1.0f / std::sqrt(static_cast<float>(head_dim));
 
     // scores = q @ k^T / sqrt(head_dim)
     // k^T: [B, S_kv, n_heads, head_dim] -> [B, n_heads, S_kv, S]
-    auto kt = ir::transpose(k, 2, 3);  // [B, S_kv, n_heads, head_dim] -> [B, S_kv, head_dim, n_heads]
+    auto kt = ir::transpose(k, 2, 3); // [B, S_kv, n_heads, head_dim] -> [B, S_kv, head_dim, n_heads]
     // Actually need to permute: [B, S, n_heads, head_dim] -> [B, n_heads, S, head_dim]
     // then k: [B, n_heads, S_kv, head_dim]
     // then scores = q @ k^T = [B, n_heads, S, S_kv]
-    auto q_perm = ir::permute(q, {0, 2, 1, 3});  // [B, n_heads, S, head_dim]
-    auto k_perm = ir::permute(k, {0, 2, 1, 3});  // [B, n_heads, S_kv, head_dim]
-    auto v_perm = ir::permute(v, {0, 2, 1, 3});  // [B, n_heads, S_kv, head_dim]
+    auto q_perm = ir::permute(q, {0, 2, 1, 3}); // [B, n_heads, S, head_dim]
+    auto k_perm = ir::permute(k, {0, 2, 1, 3}); // [B, n_heads, S_kv, head_dim]
+    auto v_perm = ir::permute(v, {0, 2, 1, 3}); // [B, n_heads, S_kv, head_dim]
 
     // k_perm^T: [B, n_heads, head_dim, S_kv]
     auto kt_perm = ir::transpose(k_perm, 2, 3);
-    auto scores = ir::matmul(q_perm, kt_perm) * scale;  // [B, n_heads, S, S_kv]
+    auto scores = ir::matmul(q_perm, kt_perm) * scale; // [B, n_heads, S, S_kv]
 
     if (mask) {
         scores = ir::add(scores, mask);
     }
 
-    auto attn = softmax(scores);  // [B, n_heads, S, S_kv]
-    auto out = ir::matmul(attn, v_perm);  // [B, n_heads, S, head_dim]
+    auto attn = softmax(scores);         // [B, n_heads, S, S_kv]
+    auto out = ir::matmul(attn, v_perm); // [B, n_heads, S, head_dim]
 
     // [B, S, n_heads, head_dim]
     return ir::permute(out, {0, 2, 1, 3});
@@ -344,11 +346,9 @@ inline utils::Ref<ir::Tensor> scaled_dot_product_attention(
 // 1D convolution for linear attention (causal, depthwise).
 // x: [B, S, C], weight: [C, kernel_size, 1] -> output: [B, S, C]
 // Uses circular padding (standard for Mamba/linear attention).
-inline utils::Ref<ir::Tensor> conv1d(
-    const utils::Ref<ir::Tensor>& x,
-    const utils::Ref<ir::Tensor>& weight,  // [C, kernel_size, 1]
-    const utils::Ref<ir::Tensor>& bias = nullptr)
-{
+inline utils::Ref<ir::Tensor> conv1d(const utils::Ref<ir::Tensor> &x,
+                                     const utils::Ref<ir::Tensor> &weight, // [C, kernel_size, 1]
+                                     const utils::Ref<ir::Tensor> &bias = nullptr) {
     auto shape = x->shape();
     size_t B = shape[0], S = shape[1], C = shape[2];
     size_t k_size = weight->shape()[1];
@@ -365,9 +365,9 @@ inline utils::Ref<ir::Tensor> conv1d(
     // For now, implement as loop (fine for small kernel sizes like 4)
     // Each slice: x[:, (s-i):] * weight[:, i, 0] with circular indexing
 
-    auto x_2d = ir::reshape(x, {B * S, C});  // [B*S, C]
-    auto w_2d = ir::reshape(weight, {C, k_size});  // [C, k_size]
-    auto w_t = ir::transpose(w_2d, 1, 0);  // [k_size, C]
+    auto x_2d = ir::reshape(x, {B * S, C});       // [B*S, C]
+    auto w_2d = ir::reshape(weight, {C, k_size}); // [C, k_size]
+    auto w_t = ir::transpose(w_2d, 1, 0);         // [k_size, C]
 
     // Get x data and weight data to build column matrix on CPU
     // This is a composite op that precomputes the column matrix
@@ -396,8 +396,8 @@ inline utils::Ref<ir::Tensor> conv1d(
         // Extract first column of weight: [C, 1] -> [C]
         std::vector<size_t> begin_w = {0, 0, 0};
         std::vector<size_t> end_w = {C, 1, 1};
-        auto w_col = ir::slice(weight, begin_w, end_w);  // [C, 1, 1]
-        auto w_flat = ir::reshape(w_col, {C});  // [C]
+        auto w_col = ir::slice(weight, begin_w, end_w); // [C, 1, 1]
+        auto w_flat = ir::reshape(w_col, {C});          // [C]
         // x: [B, 1, C], result = x * w_flat (broadcasting)
         return x * w_flat;
     }
@@ -413,16 +413,16 @@ inline utils::Ref<ir::Tensor> conv1d(
     // Get last element: x[:, S-1:S, :]
     std::vector<size_t> begin_last = {0, S - 1, 0};
     std::vector<size_t> end_last = {B, S, C};
-    auto x_last = ir::slice(x, begin_last, end_last);  // [B, 1, C]
+    auto x_last = ir::slice(x, begin_last, end_last); // [B, 1, C]
 
     // Tile it k_size-1 times for padding
     // Actually, for circular padding, we need the last (k_size-1) elements
     // Let's just implement it as: pad x with copies of last element
-    auto x_padded = x_last;  // Start with [B, 1, C]
+    auto x_padded = x_last; // Start with [B, 1, C]
     for (size_t i = 1; i < k_size - 1; ++i) {
-        x_padded = ir::concat(x_padded, x_last, 1);  // [B, i+1, C]
+        x_padded = ir::concat(x_padded, x_last, 1); // [B, i+1, C]
     }
-    x_padded = ir::concat(x_padded, x, 1);  // [B, S + k_size - 1, C]
+    x_padded = ir::concat(x_padded, x, 1); // [B, S + k_size - 1, C]
 
     // Now extract k_size windows
     // Use im2col: for each position s in 0..S-1, take x_padded[s:s+k_size]
@@ -430,7 +430,7 @@ inline utils::Ref<ir::Tensor> conv1d(
 
     // Build column matrix by stacking slices
     // For each window position, gather the window
-    auto col_stack = x_padded;  // First window (or just start accumulating)
+    auto col_stack = x_padded; // First window (or just start accumulating)
 
     // Actually simpler: reshape x_padded to [B, S+k-1, 1, C]
     // Then for each of the k_size offsets, slice and stack
@@ -440,17 +440,17 @@ inline utils::Ref<ir::Tensor> conv1d(
     // Then stack along a new axis
     std::vector<size_t> begin_p = {0, 0, 0};
     std::vector<size_t> end_p = {B, S, C};
-    auto first_window = ir::slice(x_padded, begin_p, end_p);  // [B, S, C]
+    auto first_window = ir::slice(x_padded, begin_p, end_p); // [B, S, C]
 
     std::vector<size_t> out_shape_4d = {B, S, 1, C};
-    auto col_reshaped = ir::reshape(first_window, out_shape_4d);  // [B, S, 1, C]
+    auto col_reshaped = ir::reshape(first_window, out_shape_4d); // [B, S, 1, C]
 
     for (size_t i = 1; i < k_size; ++i) {
         begin_p[1] = i;
         end_p[1] = i + S;
         auto window = ir::slice(x_padded, begin_p, end_p);  // [B, S, C]
-        window = ir::reshape(window, {B, S, 1, C});  // [B, S, 1, C]
-        col_reshaped = ir::concat(col_reshaped, window, 2);  // [B, S, i+1, C]
+        window = ir::reshape(window, {B, S, 1, C});         // [B, S, 1, C]
+        col_reshaped = ir::concat(col_reshaped, window, 2); // [B, S, i+1, C]
     }
 
     // col_reshaped: [B, S, k_size, C]
@@ -458,7 +458,7 @@ inline utils::Ref<ir::Tensor> conv1d(
     auto w_3d = ir::reshape(weight, {1, 1, k_size, C, 1});
     // Hmm, weight is [C, k_size, 1]. Need to permute to [k_size, C, 1]
     // Actually: weight [C, k_size, 1] -> [k_size, C, 1] via permute
-    auto w_perm = ir::permute(weight, {1, 0, 2});  // [k_size, C, 1]
+    auto w_perm = ir::permute(weight, {1, 0, 2}); // [k_size, C, 1]
     w_perm = ir::broadcast(w_perm, {B, S, k_size, C, 1});
 
     // Hmm, this is getting complex. Let me simplify.
@@ -477,17 +477,17 @@ inline utils::Ref<ir::Tensor> conv1d(
 
     // Broadcast weight to [B, S, k_size, C, 1] -> no, weight is [C, k_size, 1]
     // Permute weight to [1, 1, k_size, C] and broadcast with col [B, S, k_size, C]
-    auto w_bc = ir::permute(weight, {1, 0, 2});  // [k_size, C, 1]
-    w_bc = ir::reshape(w_bc, {k_size, C});  // [k_size, C]
+    auto w_bc = ir::permute(weight, {1, 0, 2}); // [k_size, C, 1]
+    w_bc = ir::reshape(w_bc, {k_size, C});      // [k_size, C]
     // Actually weight is [C, k_size, 1], we need [1, 1, k_size, C]
     // weight without last dim: [C, k_size] -> permute [k_size, C] -> broadcast to [B,S,k_size,C]
 
-    auto w_sq = ir::slice(weight, {0, 0, 0}, {C, k_size, 1});  // [C, k_size]
-    w_sq = ir::permute(w_sq, {1, 0});  // [k_size, C]
+    auto w_sq = ir::slice(weight, {0, 0, 0}, {C, k_size, 1}); // [C, k_size]
+    w_sq = ir::permute(w_sq, {1, 0});                         // [k_size, C]
     w_sq = ir::broadcast(w_sq, {B, S, k_size, C});
 
-    auto product = col_reshaped * w_sq;  // [B, S, k_size, C]
-    auto result_t = ir::sum(product, {2});  // [B, S, C] - sum over k_size axis
+    auto product = col_reshaped * w_sq;    // [B, S, k_size, C]
+    auto result_t = ir::sum(product, {2}); // [B, S, C] - sum over k_size axis
 
     if (bias) {
         result_t = result_t + bias;
@@ -500,10 +500,8 @@ inline utils::Ref<ir::Tensor> conv1d(
 // Applies a per-head gate to the attention output using swish activation.
 // gate_weight: [num_heads] or [num_heads, 1] or [num_heads, head_dim]
 // attn_output: [B, S, num_heads, head_dim]
-inline utils::Ref<ir::Tensor> attn_output_gate(
-    const utils::Ref<ir::Tensor>& attn_output,
-    const utils::Ref<ir::Tensor>& gate_weight)
-{
+inline utils::Ref<ir::Tensor> attn_output_gate(const utils::Ref<ir::Tensor> &attn_output,
+                                               const utils::Ref<ir::Tensor> &gate_weight) {
     // gate: silu(gate_weight)
     auto gate = silu(gate_weight);
 
@@ -535,10 +533,10 @@ inline utils::Ref<ir::Tensor> attn_output_gate(
 // materializes is the score matrix [B,nKV,n_rep,S,KV] (same size as the non-grouped [B,nH,S,KV],
 // which the caller bounds via the prefill chunk). Equivalent to repeat_kv+SDPA
 // (tests/test_gqa_attention.cpp). For n_rep==1 it is plain multi-head attention.
-inline utils::Ref<ir::Tensor> gqa_attention(
-    const utils::Ref<ir::Tensor>& q, const utils::Ref<ir::Tensor>& k,
-    const utils::Ref<ir::Tensor>& v, const utils::Ref<ir::Tensor>& mask, size_t n_rep) {
-    const auto& qs = q->shape();
+inline utils::Ref<ir::Tensor> gqa_attention(const utils::Ref<ir::Tensor> &q, const utils::Ref<ir::Tensor> &k,
+                                            const utils::Ref<ir::Tensor> &v, const utils::Ref<ir::Tensor> &mask,
+                                            size_t n_rep) {
+    const auto &qs = q->shape();
     const size_t B = qs[0], S = qs[1], nH = qs[2], Dh = qs[3];
     const size_t KV = k->shape()[1], nKV = k->shape()[2];
     const float scale = 1.0f / std::sqrt(static_cast<float>(Dh));
@@ -548,14 +546,15 @@ inline utils::Ref<ir::Tensor> gqa_attention(
     // k (contiguous [B,KV,nKV,Dh]) -> [B,KV,nKV,1,Dh] (view) -> bcast [B,KV,nKV,n_rep,Dh] (stride-0)
     //   -> permute to k^T per head [B,nKV,n_rep,Dh,KV] (view, no copy).
     auto k5 = ir::broadcast(ir::reshape(k, {B, KV, nKV, 1, Dh}), {B, KV, nKV, n_rep, Dh});
-    auto kbc = ir::permute(k5, {0, 2, 3, 4, 1});                 // [B,nKV,n_rep,Dh,KV]
-    auto scores = ir::mul(ir::matmul(q5, kbc), scale);           // [B,nKV,n_rep,S,KV]
-    if (mask) scores = ir::add(scores, ir::reshape(mask, {1, 1, 1, S, KV}));
-    auto attn = softmax(scores);                                 // over last axis (KV)
+    auto kbc = ir::permute(k5, {0, 2, 3, 4, 1});       // [B,nKV,n_rep,Dh,KV]
+    auto scores = ir::mul(ir::matmul(q5, kbc), scale); // [B,nKV,n_rep,S,KV]
+    if (mask)
+        scores = ir::add(scores, ir::reshape(mask, {1, 1, 1, S, KV}));
+    auto attn = softmax(scores); // over last axis (KV)
     // v -> [B,KV,nKV,1,Dh] (view) -> bcast [B,KV,nKV,n_rep,Dh] -> [B,nKV,n_rep,KV,Dh] (view).
     auto v5 = ir::broadcast(ir::reshape(v, {B, KV, nKV, 1, Dh}), {B, KV, nKV, n_rep, Dh});
-    auto vbc = ir::permute(v5, {0, 2, 3, 1, 4});                 // [B,nKV,n_rep,KV,Dh]
-    auto out5 = ir::matmul(attn, vbc);                           // [B,nKV,n_rep,S,Dh]
+    auto vbc = ir::permute(v5, {0, 2, 3, 1, 4}); // [B,nKV,n_rep,KV,Dh]
+    auto out5 = ir::matmul(attn, vbc);           // [B,nKV,n_rep,S,Dh]
     // -> [B,S,nKV,n_rep,Dh] -> [B,S,nH,Dh]
     return ir::reshape(ir::permute(out5, {0, 3, 1, 2, 4}), {B, S, nH, Dh});
 }
@@ -563,10 +562,9 @@ inline utils::Ref<ir::Tensor> gqa_attention(
 // Fused flash attention: same result as gqa_attention but streams over keys with online softmax, so
 // the [S,KV] score matrix is NEVER materialized (O(1) extra memory). Causal by position: query row s
 // attends keys [0, q_offset+s]. q [B,S,nH,Dh], k,v [B,KV,nKV,Dh] (nH=n_rep*nKV) -> [B,S,nH,Dh].
-inline utils::Ref<ir::Tensor> flash_attention(const utils::Ref<ir::Tensor>& q,
-                                              const utils::Ref<ir::Tensor>& k,
-                                              const utils::Ref<ir::Tensor>& v,
-                                              size_t n_rep, bool causal, size_t q_offset) {
+inline utils::Ref<ir::Tensor> flash_attention(const utils::Ref<ir::Tensor> &q, const utils::Ref<ir::Tensor> &k,
+                                              const utils::Ref<ir::Tensor> &v, size_t n_rep, bool causal,
+                                              size_t q_offset) {
     const float scale = 1.0f / std::sqrt(static_cast<float>(q->shape()[3]));
     // Ensure contiguous (the kernel indexes densely). No-op when already contiguous.
     auto qc = ir::reshape(q, q->shape());
@@ -601,15 +599,15 @@ inline utils::Ref<ir::Tensor> flash_attention(const utils::Ref<ir::Tensor>& q,
 //   q,k: [BH,S,dk]   v: [BH,S,dv]   decay: [BH,S] (= exp(g) in (0,1])   beta: [BH,S]
 //   state_in: [BH,dk,dv] or null (=> zeros).  state_out receives the final [BH,dk,dv] state.
 // Returns o: [BH,S,dv].
-inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
-    const utils::Ref<ir::Tensor>& q, const utils::Ref<ir::Tensor>& k,
-    const utils::Ref<ir::Tensor>& v, const utils::Ref<ir::Tensor>& decay,
-    const utils::Ref<ir::Tensor>& beta, const utils::Ref<ir::Tensor>& state_in,
-    utils::Ref<ir::Tensor>& state_out, size_t chunk = 64)
-{
+inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(const utils::Ref<ir::Tensor> &q, const utils::Ref<ir::Tensor> &k,
+                                                       const utils::Ref<ir::Tensor> &v,
+                                                       const utils::Ref<ir::Tensor> &decay,
+                                                       const utils::Ref<ir::Tensor> &beta,
+                                                       const utils::Ref<ir::Tensor> &state_in,
+                                                       utils::Ref<ir::Tensor> &state_out, size_t chunk = 64) {
     auto dev = q->device_type();
     const size_t BH = q->shape()[0];
-    const size_t S  = q->shape()[1];
+    const size_t S = q->shape()[1];
     const size_t dk = q->shape()[2];
     const size_t dv = v->shape()[2];
 
@@ -632,14 +630,16 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
         std::vector<float> mincl(L * L, 0.f), mstrict(L * L, 0.f), mid(L * L, 0.f);
         for (size_t i = 0; i < L; ++i)
             for (size_t j = 0; j < L; ++j) {
-                if (j <= i) mincl[i * L + j] = 1.f;
-                if (j <  i) mstrict[i * L + j] = 1.f;
-                if (i == j) mid[i * L + j] = 1.f;
+                if (j <= i)
+                    mincl[i * L + j] = 1.f;
+                if (j < i)
+                    mstrict[i * L + j] = 1.f;
+                if (i == j)
+                    mid[i * L + j] = 1.f;
             }
-        return std::array<utils::Ref<ir::Tensor>, 3>{
-            ir::from_vector<float>(mincl,   {1, L, L}, dev),
-            ir::from_vector<float>(mstrict, {1, L, L}, dev),
-            ir::from_vector<float>(mid,     {1, L, L}, dev)};
+        return std::array<utils::Ref<ir::Tensor>, 3>{ir::from_vector<float>(mincl, {1, L, L}, dev),
+                                                     ir::from_vector<float>(mstrict, {1, L, L}, dev),
+                                                     ir::from_vector<float>(mid, {1, L, L}, dev)};
     };
     const size_t Lfull = std::min(chunk, S);
     const auto masks_full = build_masks(Lfull);
@@ -648,61 +648,62 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(
     for (size_t off = 0; off < S; off += chunk) {
         const size_t L = std::min(chunk, S - off);
 
-        auto qc = ir::slice(q, {0, off, 0}, {BH, off + L, dk});      // [BH,L,dk]
+        auto qc = ir::slice(q, {0, off, 0}, {BH, off + L, dk}); // [BH,L,dk]
         auto kc = ir::slice(k, {0, off, 0}, {BH, off + L, dk});
-        auto vc = ir::slice(v, {0, off, 0}, {BH, off + L, dv});      // [BH,L,dv]
-        auto gc = ir::slice(g_all,    {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
-        auto bc = ir::slice(beta_all, {0, off, 0}, {BH, off + L, 1});// [BH,L,1]
+        auto vc = ir::slice(v, {0, off, 0}, {BH, off + L, dv});       // [BH,L,dv]
+        auto gc = ir::slice(g_all, {0, off, 0}, {BH, off + L, 1});    // [BH,L,1]
+        auto bc = ir::slice(beta_all, {0, off, 0}, {BH, off + L, 1}); // [BH,L,1]
 
         const auto masks = (L == Lfull) ? masks_full : build_masks(L);
-        auto M_incl   = masks[0];
+        auto M_incl = masks[0];
         auto M_strict = masks[1];
-        auto M_id     = masks[2];
+        auto M_id = masks[2];
 
         // Inclusive cumulative log-decay G_i = sum_{j<=i} g_j (<=0), via mask-multiply (no matmul).
-        auto g_row = ir::reshape(gc, {BH, 1, L});                        // [BH,1,L]
-        auto G = ir::sum(ir::mul(g_row, M_incl), {2}, true);            // [BH,L,1]
-        auto d_inc = ir::exp(G);                                        // d_i in (0,1]   [BH,L,1]
+        auto g_row = ir::reshape(gc, {BH, 1, L});            // [BH,1,L]
+        auto G = ir::sum(ir::mul(g_row, M_incl), {2}, true); // [BH,L,1]
+        auto d_inc = ir::exp(G);                             // d_i in (0,1]   [BH,L,1]
 
         // Pairwise decay ratio D[i,j] = d_i/d_j = exp(G_i - G_j), clamped to <=0 before exp so the
         // masked-out (i<j, would be >0) entries can't overflow:  exp(min(G_i-G_j, 0)).
-        auto E = ir::sub(G, ir::reshape(G, {BH, 1, L}));               // [BH,L,L] E[i,j]=G_i-G_j
-        auto Dexp = ir::exp(ir::neg(ir::relu(ir::neg(E))));            // exp(min(E,0)) in (0,1]
+        auto E = ir::sub(G, ir::reshape(G, {BH, 1, L}));    // [BH,L,L] E[i,j]=G_i-G_j
+        auto Dexp = ir::exp(ir::neg(ir::relu(ir::neg(E)))); // exp(min(E,0)) in (0,1]
 
-        auto kt = ir::transpose(kc, 1, 2);                             // [BH,dk,L]
+        auto kt = ir::transpose(kc, 1, 2); // [BH,dk,L]
         // A[i,j] = beta_i (d_i/d_j)(k_i.k_j), strictly lower (j<i)
         auto A = ir::mul(ir::mul(ir::mul(ir::matmul(kc, kt), Dexp), M_strict), bc);
 
         // Inv = (I + A)^{-1} = sum_{p>=0}(-A)^p (finite; A^L=0). Doubling: R_{2m}=(I+P^m)R_m.
         auto P = ir::neg(A);
-        auto R = ir::add(ir::mul(P, 0.0f), M_id);                      // R_1 = I lifted to [BH,L,L]
+        auto R = ir::add(ir::mul(P, 0.0f), M_id); // R_1 = I lifted to [BH,L,L]
         auto Pm = P;
         for (size_t steps = 1; steps < L; steps *= 2) {
-            R  = ir::matmul(ir::add(Pm, M_id), R);
+            R = ir::matmul(ir::add(Pm, M_id), R);
             Pm = ir::matmul(Pm, Pm);
         }
         auto Inv = R;
 
-        auto KS  = ir::matmul(kc, state);                             // K S_in   [BH,L,dv]
-        auto RHS = ir::mul(ir::sub(vc, ir::mul(d_inc, KS)), bc);       // beta (V - d (.) K S_in)
-        auto U   = ir::matmul(Inv, RHS);                              // [BH,L,dv]
+        auto KS = ir::matmul(kc, state);                         // K S_in   [BH,L,dv]
+        auto RHS = ir::mul(ir::sub(vc, ir::mul(d_inc, KS)), bc); // beta (V - d (.) K S_in)
+        auto U = ir::matmul(Inv, RHS);                           // [BH,L,dv]
 
-        auto QS    = ir::matmul(qc, state);                           // Q S_in   [BH,L,dv]
+        auto QS = ir::matmul(qc, state);                                 // Q S_in   [BH,L,dv]
         auto QKt_l = ir::mul(ir::mul(ir::matmul(qc, kt), Dexp), M_incl); // (d_i/d_j) tril_incl(Q K^T)
-        auto intra = ir::matmul(QKt_l, U);                            // [BH,L,dv]
-        o_chunks.push_back(ir::add(ir::mul(QS, d_inc), intra));       // d_i (Q S_in) + intra
+        auto intra = ir::matmul(QKt_l, U);                               // [BH,L,dv]
+        o_chunks.push_back(ir::add(ir::mul(QS, d_inc), intra));          // d_i (Q S_in) + intra
 
         // S_out = d_{L-1} S_in + sum_j (d_{L-1}/d_j) k_j U_j^T = d_last S_in + K^T (c (.) U)
         auto d_last = ir::reshape(ir::slice(d_inc, {0, L - 1, 0}, {BH, L, 1}), {BH, 1, 1});
         auto cvec = ir::exp(ir::neg(ir::relu(ir::neg(ir::sub(ir::slice(G, {0, L - 1, 0}, {BH, L, 1}), G)))));
-        auto KtU = ir::matmul(kt, ir::mul(U, cvec));                  // [BH,dk,dv]
+        auto KtU = ir::matmul(kt, ir::mul(U, cvec)); // [BH,dk,dv]
         state = ir::add(ir::mul(state, d_last), KtU);
     }
     state_out = state;
 
     utils::Ref<ir::Tensor> o = o_chunks[0];
-    for (size_t i = 1; i < o_chunks.size(); ++i) o = ir::concat(o, o_chunks[i], 1);
-    return o;  // [BH,S,dv]
+    for (size_t i = 1; i < o_chunks.size(); ++i)
+        o = ir::concat(o, o_chunks[i], 1);
+    return o; // [BH,S,dv]
 }
 
 } // namespace cppgrad::nn::functional

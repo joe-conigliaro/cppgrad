@@ -4,21 +4,21 @@
 
 #include <cmath>
 #include <cstddef>
-#include "cppgrad/nn/module.h"
+
+#include "cppgrad/backend/device_manager.h"
+#include "cppgrad/ir/parameter.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor_utils.h"
-#include "cppgrad/ir/parameter.h"
-#include "cppgrad/backend/device_manager.h"
+#include "cppgrad/nn/module.h"
 
 namespace cppgrad::nn {
 
 class Embedding : public Module {
-public:
+  public:
     utils::Ref<ir::Tensor> weight;
 
-    Embedding(size_t vocab_size,
-              size_t embed_dim,
+    Embedding(size_t vocab_size, size_t embed_dim,
               backend::DeviceType device_type = backend::DeviceManager::default_device_type()) {
         float limit = std::sqrt(1.0f / static_cast<float>(embed_dim));
         auto w_init = ir::uniform({vocab_size, embed_dim}, -limit, limit, device_type);
@@ -26,9 +26,7 @@ public:
         register_parameter("weight", weight);
     }
 
-    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& ids) override {
-        return ir::gather(weight, ids);
-    }
+    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor> &ids) override { return ir::gather(weight, ids); }
 };
 
-} // namespace cppgrad:nn
+} // namespace cppgrad::nn

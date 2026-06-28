@@ -4,25 +4,24 @@
 
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
-#include <stdexcept>
-#include "cppgrad/ir/tensor.h"
+
 #include "cppgrad/ir/parameter.h"
+#include "cppgrad/ir/tensor.h"
 
 namespace cppgrad::nn {
 
 class Module : public std::enable_shared_from_this<Module> {
-public:
+  public:
     virtual ~Module() = default;
 
-    utils::Ref<ir::Tensor> operator()(const utils::Ref<ir::Tensor>& input) {
-        return this->forward(input);
-    }
+    utils::Ref<ir::Tensor> operator()(const utils::Ref<ir::Tensor> &input) { return this->forward(input); }
 
-    virtual utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& input) {
+    virtual utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor> &input) {
         auto current_x = input;
-        for (const auto& module : _modules_vec) {
+        for (const auto &module : _modules_vec) {
             current_x = (*module)(current_x);
         }
         return current_x;
@@ -31,8 +30,9 @@ public:
     std::vector<utils::Ref<ir::Tensor>> parameters() {
         std::vector<utils::Ref<ir::Tensor>> params;
         params.reserve(_parameters.size());
-        for (auto const& [name, param] : _parameters) params.push_back(param);
-        for (auto const& module : _modules_vec) {
+        for (auto const &[name, param] : _parameters)
+            params.push_back(param);
+        for (auto const &module : _modules_vec) {
             auto sub_params = module->parameters();
             params.insert(params.end(), sub_params.begin(), sub_params.end());
         }
@@ -42,13 +42,12 @@ public:
     std::vector<utils::Ref<ir::Tensor>> direct_parameters() {
         std::vector<utils::Ref<ir::Tensor>> params;
         params.reserve(_parameters.size());
-        for (auto const& [name, param] : _parameters) params.push_back(param);
+        for (auto const &[name, param] : _parameters)
+            params.push_back(param);
         return params;
     }
 
-    std::vector<std::shared_ptr<Module>> direct_modules() {
-        return _modules_vec;
-    }
+    std::vector<std::shared_ptr<Module>> direct_modules() { return _modules_vec; }
 
     // utils::Ref<ir::Tensor> get_parameter(const std::string& name) const {
     //     auto it = _parameters.find(name);
@@ -67,36 +66,37 @@ public:
     //     _parameters[name] = std::move(param);
     // }
 
-protected:
-    void register_parameter(const std::string& name, utils::Ref<ir::Tensor> param) {
-        if (!param) throw std::runtime_error("register_parameter: null tensor");
-        if (!param->is_canonical_leaf()) throw std::runtime_error("register_parameter: param must be a canonical leaf");
-        if (_parameters.count(name)) throw std::runtime_error("register_parameter: parameter already exists: " + name);
+  protected:
+    void register_parameter(const std::string &name, utils::Ref<ir::Tensor> param) {
+        if (!param)
+            throw std::runtime_error("register_parameter: null tensor");
+        if (!param->is_canonical_leaf())
+            throw std::runtime_error("register_parameter: param must be a canonical leaf");
+        if (_parameters.count(name))
+            throw std::runtime_error("register_parameter: parameter already exists: " + name);
 
         // Realize storage only if the param already has it; deferred (lazy) params -- created with
         // allocate_now=false for checkpoint loading -- intentionally have no storage yet and get it
         // when loaded. (schedule() is a no-op once a buffer exists, and throws for deferred leaves.)
-        if (param->storage_view().buffer) param->schedule();
+        if (param->storage_view().buffer)
+            param->schedule();
         param->set_requires_grad(true);
         _parameters[name] = std::move(param);
     }
 
-
-    void register_module(const std::string& name, std::shared_ptr<Module> module) {
+    void register_module(const std::string &name, std::shared_ptr<Module> module) {
         _named_modules[name] = module;
         _modules_vec.push_back(module);
     }
 
-    void register_modules(std::vector<std::shared_ptr<Module>> modules) {
-        _modules_vec = std::move(modules);
-    }
+    void register_modules(std::vector<std::shared_ptr<Module>> modules) { _modules_vec = std::move(modules); }
 
-protected:
+  protected:
     std::vector<std::shared_ptr<Module>> _modules_vec;
 
-private:
+  private:
     std::map<std::string, utils::Ref<ir::Tensor>> _parameters;
     std::map<std::string, std::shared_ptr<Module>> _named_modules;
 };
 
-} // namespace cppgrad:nn
+} // namespace cppgrad::nn

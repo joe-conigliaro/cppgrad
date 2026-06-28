@@ -2,15 +2,15 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include "cppgrad/nn/module.h"
 #include "cppgrad/nn/activations.h"
+#include "cppgrad/nn/module.h"
 
 namespace cppgrad::nn {
 
 class MLP : public Module {
-public:
+  public:
     MLP(int in_features, int hidden_size, int out_features);
     ~MLP() override;
 };
 
-} // namespace cppgrad:nn
+} // namespace cppgrad::nn

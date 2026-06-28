@@ -4,18 +4,21 @@
 
 #include <memory>
 #include <vector>
+
+#include "cppgrad/ir/grad_mode.h"
+#include "cppgrad/ir/graph_context.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
-#include "cppgrad/ir/graph_context.h"
-#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/optim/optim.h"
 
 namespace cppgrad::optim {
 
 class Adam : public Optimizer {
-public:
-    Adam(std::vector<utils::Ref<ir::Tensor>> params, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float eps = 1e-8f, float weight_decay = 0.0f)
-    : Optimizer(std::move(params), lr), _beta1(beta1), _beta2(beta2), _eps(eps), _weight_decay(weight_decay), _t(0) {
+  public:
+    Adam(std::vector<utils::Ref<ir::Tensor>> params, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f,
+         float eps = 1e-8f, float weight_decay = 0.0f)
+        : Optimizer(std::move(params), lr), _beta1(beta1), _beta2(beta2), _eps(eps), _weight_decay(weight_decay),
+          _t(0) {
         init_state();
     }
 
@@ -27,11 +30,13 @@ public:
         const float b2t = std::pow(_beta2, _t);
 
         for (size_t i = 0; i < _params.size(); ++i) {
-            auto& p = _params[i];
-            if (!p) continue;
+            auto &p = _params[i];
+            if (!p)
+                continue;
 
             auto g = p->grad();
-            if (!g) continue;
+            if (!g)
+                continue;
 
             auto g_eff = apply_weight_decay_to_grad(g, p, _weight_decay);
 
@@ -50,34 +55,43 @@ public:
         }
     }
 
-protected:
+  protected:
     void init_state() {
-        _m.clear(); _v.clear();
-        _m.reserve(_params.size()); _v.reserve(_params.size());
-        for (auto& p : _params) {
-            if (!p) { _m.push_back(nullptr); _v.push_back(nullptr); continue; }
-            auto m = ir::parameterize(ir::zeros_like(p)); m->set_requires_grad(false);
-            auto v = ir::parameterize(ir::zeros_like(p)); v->set_requires_grad(false);
+        _m.clear();
+        _v.clear();
+        _m.reserve(_params.size());
+        _v.reserve(_params.size());
+        for (auto &p : _params) {
+            if (!p) {
+                _m.push_back(nullptr);
+                _v.push_back(nullptr);
+                continue;
+            }
+            auto m = ir::parameterize(ir::zeros_like(p));
+            m->set_requires_grad(false);
+            auto v = ir::parameterize(ir::zeros_like(p));
+            v->set_requires_grad(false);
             _m.push_back(m);
             _v.push_back(v);
         }
     }
 
-    virtual utils::Ref<ir::Tensor>
-    apply_weight_decay_to_grad(const utils::Ref<ir::Tensor>& g, const utils::Ref<ir::Tensor>& p, float wd) {
-        if (wd == 0.0f) return g;
+    virtual utils::Ref<ir::Tensor> apply_weight_decay_to_grad(const utils::Ref<ir::Tensor> &g,
+                                                              const utils::Ref<ir::Tensor> &p, float wd) {
+        if (wd == 0.0f)
+            return g;
         return g + (p * wd); // coupled L2 regularization
     }
 
-    virtual utils::Ref<ir::Tensor>
-    update_parameters(const utils::Ref<ir::Tensor>& p, const utils::Ref<ir::Tensor>& step_core, float /*wd*/) {
+    virtual utils::Ref<ir::Tensor> update_parameters(const utils::Ref<ir::Tensor> &p,
+                                                     const utils::Ref<ir::Tensor> &step_core, float /*wd*/) {
         return p - step_core;
     }
 
-private:
+  private:
     float _beta1, _beta2, _eps;
     float _weight_decay = 0.0f;
-    int   _t;
+    int _t;
     std::vector<utils::Ref<ir::Tensor>> _m, _v;
 };
 

@@ -2,27 +2,27 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <memory>
-#include <vector>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <utility>
+#include <memory>
 #include <stdexcept>
-#include <algorithm>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace cppgrad::utils {
 
 class Arena {
-public:
-    Arena(const Arena&) = delete;
-    Arena& operator=(const Arena&) = delete;
+  public:
+    Arena(const Arena &) = delete;
+    Arena &operator=(const Arena &) = delete;
     Arena() = default;
     ~Arena() = default;
 
     // Allocate raw memory for one object with given size and alignment.
     // Does NOT construct the object.
-    void* alloc_raw(std::size_t size, std::size_t align) {
+    void *alloc_raw(std::size_t size, std::size_t align) {
         // Calculate current address as integer
         auto current_addr = reinterpret_cast<std::uintptr_t>(_current_ptr);
 
@@ -36,9 +36,9 @@ public:
 
         // Fast Path: Check if it fits in current chunk
         if (total_needed <= _remaining_bytes) {
-            _current_ptr = reinterpret_cast<void*>(aligned_addr + size);
+            _current_ptr = reinterpret_cast<void *>(aligned_addr + size);
             _remaining_bytes -= total_needed;
-            return reinterpret_cast<void*>(aligned_addr);
+            return reinterpret_cast<void *>(aligned_addr);
         }
 
         // Slow Path: Allocate new chunk
@@ -50,20 +50,19 @@ public:
         aligned_addr = (current_addr + (align - 1)) & ~(align - 1);
 
         // We know it fits now because new_chunk allocates max(size+align, CHUNK_SIZE)
-        _current_ptr = reinterpret_cast<void*>(aligned_addr + size);
+        _current_ptr = reinterpret_cast<void *>(aligned_addr + size);
 
         padding = aligned_addr - current_addr;
         _remaining_bytes -= (size + padding);
 
-        return reinterpret_cast<void*>(aligned_addr);
+        return reinterpret_cast<void *>(aligned_addr);
     }
 
     // Allocate memory for one object of type T and construct it.
-    template<typename T, typename... Args>
-    T* alloc(Args&&... args) {
+    template <typename T, typename... Args> T *alloc(Args &&...args) {
         static_assert(!std::is_array<T>::value, "Arena::alloc does not support arrays");
 
-        void* mem = alloc_raw(sizeof(T), alignof(T));
+        void *mem = alloc_raw(sizeof(T), alignof(T));
 
         return new (mem) T(std::forward<Args>(args)...);
     }
@@ -115,20 +114,22 @@ public:
     }
 
     // Debug helper: does this pointer come from any of our chunks?
-    bool owns(const void* p) const noexcept {
-        #ifdef CPPGRAD_DEBUG
-            if (!p) return false;
-            auto addr = reinterpret_cast<std::uintptr_t>(p);
-            for (size_t i = 0; i < _chunks.size(); ++i) {
-                auto base = reinterpret_cast<std::uintptr_t>(_chunks[i].get());
-                auto end  = base + _chunk_sizes[i];
-                if (addr >= base && addr < end) return true;
-            }
-        #endif
+    bool owns(const void *p) const noexcept {
+#ifdef CPPGRAD_DEBUG
+        if (!p)
+            return false;
+        auto addr = reinterpret_cast<std::uintptr_t>(p);
+        for (size_t i = 0; i < _chunks.size(); ++i) {
+            auto base = reinterpret_cast<std::uintptr_t>(_chunks[i].get());
+            auto end = base + _chunk_sizes[i];
+            if (addr >= base && addr < end)
+                return true;
+        }
+#endif
         return false;
     }
 
-private:
+  private:
     void new_chunk(size_t min_size) {
         size_t chunk_size = std::max(min_size, CHUNK_SIZE_BYTES);
 
@@ -144,7 +145,7 @@ private:
     std::vector<std::unique_ptr<std::byte[]>> _chunks;
     std::vector<size_t> _chunk_sizes;
 
-    void*  _current_ptr = nullptr;
+    void *_current_ptr = nullptr;
     size_t _remaining_bytes = 0;
 };
 

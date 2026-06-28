@@ -2,17 +2,18 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <vector>
+#include <algorithm>
+#include <functional>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
-#include <algorithm>
-#include <functional>
+#include <vector>
+
 #include "cppgrad/utils/vector.h"
 
 namespace cppgrad::utils::shape {
 
-inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t>& a_shape, const std::vector<size_t>& b_shape) {
+inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t> &a_shape, const std::vector<size_t> &b_shape) {
     auto max_rank = std::max(a_shape.size(), b_shape.size());
     std::vector<size_t> out_shape(max_rank);
 
@@ -23,9 +24,11 @@ inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t>& a_shap
         if (dim_a != dim_b && dim_a != 1 && dim_b != 1) {
             std::ostringstream oss;
             oss << "Shapes are not broadcastable: {";
-            for (size_t j = 0; j < a_shape.size(); ++j) oss << a_shape[j] << " ";
+            for (size_t j = 0; j < a_shape.size(); ++j)
+                oss << a_shape[j] << " ";
             oss << "} and {";
-            for (size_t j = 0; j < b_shape.size(); ++j) oss << b_shape[j] << " }";
+            for (size_t j = 0; j < b_shape.size(); ++j)
+                oss << b_shape[j] << " }";
             throw std::runtime_error(oss.str());
         }
         out_shape[max_rank - 1 - i] = std::max(dim_a, dim_b);
@@ -33,7 +36,8 @@ inline std::vector<size_t> get_broadcast_shape(const std::vector<size_t>& a_shap
     return out_shape;
 }
 
-inline std::vector<size_t> get_reduce_shape(const std::vector<size_t>& in_shape, const std::vector<int>& axes, bool keep_dims) {
+inline std::vector<size_t> get_reduce_shape(const std::vector<size_t> &in_shape, const std::vector<int> &axes,
+                                            bool keep_dims) {
     // If axes is empty, it means reduce over all dimensions.
     if (axes.empty()) {
         if (keep_dims) {
@@ -72,7 +76,8 @@ inline std::vector<size_t> get_reduce_shape(const std::vector<size_t>& in_shape,
     return out_shape;
 }
 
-inline std::vector<int> get_reduce_axes(const std::vector<size_t>& larger_shape, const std::vector<size_t>& smaller_shape) {
+inline std::vector<int> get_reduce_axes(const std::vector<size_t> &larger_shape,
+                                        const std::vector<size_t> &smaller_shape) {
     std::vector<int> axes;
     int rank_diff = larger_shape.size() - smaller_shape.size();
     // Axes that exist in the larger shape but not the smaller one
@@ -92,7 +97,7 @@ inline std::vector<int> get_reduce_axes(const std::vector<size_t>& larger_shape,
     return axes;
 }
 
-inline size_t get_reduce_count(const std::vector<size_t>& in_shape, const std::vector<int>& axes) {
+inline size_t get_reduce_count(const std::vector<size_t> &in_shape, const std::vector<int> &axes) {
     // If axes empty, treat as "reduce all dims"
     if (axes.empty()) {
         return cppgrad::utils::vector::numel(in_shape);
@@ -101,13 +106,14 @@ inline size_t get_reduce_count(const std::vector<size_t>& in_shape, const std::v
     size_t count = 1;
     for (int ax : axes) {
         int a = ax < 0 ? ax + rank : ax;
-        if (a < 0 || a >= rank) throw std::runtime_error("get_reduce_count: axis out of bounds");
+        if (a < 0 || a >= rank)
+            throw std::runtime_error("get_reduce_count: axis out of bounds");
         count *= in_shape[static_cast<size_t>(a)];
     }
     return count;
 }
 
-inline std::vector<size_t> permute(const std::vector<size_t>& in_shape, const std::vector<size_t>& axes) {
+inline std::vector<size_t> permute(const std::vector<size_t> &in_shape, const std::vector<size_t> &axes) {
     std::vector<size_t> out_shape(in_shape.size());
     for (size_t i = 0; i < axes.size(); ++i) {
         out_shape[i] = in_shape[axes[i]];
@@ -117,11 +123,12 @@ inline std::vector<size_t> permute(const std::vector<size_t>& in_shape, const st
 
 // Calculates row-major strides for a given shape.
 // For a shape {A, B, C}, the strides are {B*C, C, 1}.
-inline std::vector<size_t> row_major_strides(const std::vector<size_t>& shape) {
-    if (shape.empty()) return {}; // A scalar has no strides.
+inline std::vector<size_t> row_major_strides(const std::vector<size_t> &shape) {
+    if (shape.empty())
+        return {}; // A scalar has no strides.
     std::vector<size_t> strides(shape.size());
     size_t stride = 1;
-    for (size_t i = shape.size(); i-- > 0; ) {
+    for (size_t i = shape.size(); i-- > 0;) {
         strides[i] = stride;
         stride *= shape[i];
     }
@@ -129,19 +136,20 @@ inline std::vector<size_t> row_major_strides(const std::vector<size_t>& shape) {
 }
 
 // Row-major contiguous (dense) layout, independent of storage offset.
-inline bool is_row_major_contiguous(const std::vector<size_t>& shape, const std::vector<size_t>& strides) {
+inline bool is_row_major_contiguous(const std::vector<size_t> &shape, const std::vector<size_t> &strides) {
     return row_major_strides(shape) == strides;
 }
 
 // Row-major contiguous (dense) layout + identity/base-aligned (offset == 0).
-inline bool is_row_major_identity(const std::vector<size_t>& shape, const std::vector<size_t>& strides, size_t offset) {
+inline bool is_row_major_identity(const std::vector<size_t> &shape, const std::vector<size_t> &strides, size_t offset) {
     return offset == 0 && is_row_major_contiguous(shape, strides);
 }
 
 // Allocating: flat index -> coordinates
 // Converts a flat index to N-dimensional coordinates using pre-calculated row-major strides.
-inline std::vector<size_t> coords_from_index(size_t idx, const std::vector<size_t>& strides) {
-    if (strides.empty()) return {idx}; // scalar convention
+inline std::vector<size_t> coords_from_index(size_t idx, const std::vector<size_t> &strides) {
+    if (strides.empty())
+        return {idx}; // scalar convention
     std::vector<size_t> coords(strides.size());
     size_t rem = idx;
     for (size_t i = 0; i < strides.size(); ++i) {
@@ -153,7 +161,7 @@ inline std::vector<size_t> coords_from_index(size_t idx, const std::vector<size_
 }
 
 // No-alloc: flat index -> coordinates (writes into coords, which must be sized or will be resized)
-inline void coords_from_index_inplace(size_t idx, const std::vector<size_t>& strides, std::vector<size_t>& coords) {
+inline void coords_from_index_inplace(size_t idx, const std::vector<size_t> &strides, std::vector<size_t> &coords) {
     coords.resize(strides.size());
     size_t rem = idx;
     for (size_t i = 0; i < strides.size(); ++i) {
@@ -164,14 +172,15 @@ inline void coords_from_index_inplace(size_t idx, const std::vector<size_t>& str
 }
 
 // coordinates -> flat index
-inline size_t index_from_coords(const std::vector<size_t>& coords, const std::vector<size_t>& strides) {
+inline size_t index_from_coords(const std::vector<size_t> &coords, const std::vector<size_t> &strides) {
     size_t idx = 0;
-    for (size_t i = 0; i < coords.size(); ++i) idx += coords[i] * strides[i];
+    for (size_t i = 0; i < coords.size(); ++i)
+        idx += coords[i] * strides[i];
     return idx;
 }
 
 // Map possibly-negative axes to [0, rank). Throws on OOB.
-inline std::vector<int> normalize_axes(const std::vector<int>& axes, size_t rank) {
+inline std::vector<int> normalize_axes(const std::vector<int> &axes, size_t rank) {
     std::vector<int> out;
     out.reserve(axes.size());
     for (int ax : axes) {
@@ -191,7 +200,7 @@ inline std::vector<int> unique_sorted_axes(std::vector<int> axes_norm) {
 }
 
 // Convenience: normalize + unique + sorted in one call.
-inline std::vector<int> normalize_unique_sorted_axes(const std::vector<int>& axes, size_t rank) {
+inline std::vector<int> normalize_unique_sorted_axes(const std::vector<int> &axes, size_t rank) {
     return unique_sorted_axes(normalize_axes(axes, rank));
 }
 

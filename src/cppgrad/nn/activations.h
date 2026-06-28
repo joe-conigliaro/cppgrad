@@ -9,23 +9,18 @@
 
 namespace cppgrad::nn {
 
-
 class ReLU : public Module {
-public:
+  public:
     ReLU() = default;
 
-    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& input) override {
-        return functional::relu(input);
-    }
+    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor> &input) override { return functional::relu(input); }
 };
 
 class Tanh : public Module {
-public:
+  public:
     Tanh() = default;
 
-    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor>& input) override {
-        return functional::tanh(input);
-    }
+    utils::Ref<ir::Tensor> forward(const utils::Ref<ir::Tensor> &input) override { return functional::tanh(input); }
 };
 
-} // namespace cppgrad:nn
+} // namespace cppgrad::nn

@@ -1,14 +1,14 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#import <Foundation/Foundation.h>
-#include <string>
-#include <stdexcept>
 #include "cppgrad/backend/metal/metal_kernel_cache.h"
+#import <Foundation/Foundation.h>
+#include <stdexcept>
+#include <string>
 
 namespace cppgrad::backend::metal {
 
 MetalKernelCache::MetalKernelCache(id<MTLDevice> device) : _device(device) {
-    NSError* error = nil;
+    NSError *error = nil;
     _library = [_device newDefaultLibrary];
     if (!_library) {
         _library = [_device newDefaultLibraryWithBundle:[NSBundle mainBundle] error:&error];
@@ -22,13 +22,13 @@ MetalKernelCache::MetalKernelCache(id<MTLDevice> device) : _device(device) {
     }
 }
 
-id<MTLComputePipelineState> MetalKernelCache::get(const std::string& name) {
+id<MTLComputePipelineState> MetalKernelCache::get(const std::string &name) {
     auto it = _cache.find(name);
     if (it != _cache.end()) {
         return it->second;
     }
 
-    NSError* error = nil;
+    NSError *error = nil;
     id<MTLFunction> func = [_library newFunctionWithName:[NSString stringWithUTF8String:name.c_str()]];
     if (!func) {
         throw std::runtime_error("Failed to find Metal function: " + name);
@@ -37,7 +37,9 @@ id<MTLComputePipelineState> MetalKernelCache::get(const std::string& name) {
     id<MTLComputePipelineState> pso = [_device newComputePipelineStateWithFunction:func error:&error];
     if (!pso) {
         std::string err = "Failed to create PSO for " + name + ": ";
-        if (error) { err += [[error localizedDescription] UTF8String]; }
+        if (error) {
+            err += [[error localizedDescription] UTF8String];
+        }
         throw std::runtime_error(err);
     }
 

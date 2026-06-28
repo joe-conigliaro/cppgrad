@@ -1,8 +1,10 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
+#include "cppgrad/backend/cpu/cpu_allocator.h"
+
 #include <cstring>
 #include <stdexcept>
-#include "cppgrad/backend/cpu/cpu_allocator.h"
+
 #include "cppgrad/backend/buffer.h"
 
 namespace cppgrad::backend::cpu {
@@ -12,11 +14,11 @@ std::shared_ptr<Buffer> CPUAllocator::allocate(size_t num_elements, common::DTyp
     if (bytes == 0) {
         return std::make_shared<Buffer>(nullptr, 0, dtype, DeviceType::CPU, this);
     }
-    void* ptr = new char[bytes];
+    void *ptr = new char[bytes];
     return std::make_shared<Buffer>(ptr, bytes, dtype, DeviceType::CPU, this);
 }
 
-std::shared_ptr<Buffer> CPUAllocator::allocate(const void* src, size_t num_elements, common::DType dtype) {
+std::shared_ptr<Buffer> CPUAllocator::allocate(const void *src, size_t num_elements, common::DType dtype) {
     auto buffer = allocate(num_elements, dtype);
     if (src && buffer->data()) {
         std::memcpy(buffer->data(), src, buffer->size_bytes());
@@ -24,41 +26,47 @@ std::shared_ptr<Buffer> CPUAllocator::allocate(const void* src, size_t num_eleme
     return buffer;
 }
 
-void CPUAllocator::deallocate(void* ptr) {
+void CPUAllocator::deallocate(void *ptr) {
     if (ptr) {
-        delete[] static_cast<char*>(ptr);
+        delete[] static_cast<char *>(ptr);
     }
 }
 
 // Device -> Host
-void CPUAllocator::copy_device_to_host(void* host_dst, const Buffer& device_src) const {
+void CPUAllocator::copy_device_to_host(void *host_dst, const Buffer &device_src) const {
     // device_src must be a CPU buffer
-    if (device_src.size_bytes() == 0) return;
+    if (device_src.size_bytes() == 0)
+        return;
     if (device_src.device_type() != DeviceType::CPU) {
         throw std::runtime_error("CPUAllocator::copy_device_to_host: src is not a CPU buffer");
     }
-    if (!host_dst || !device_src.data()) return;
+    if (!host_dst || !device_src.data())
+        return;
     std::memcpy(host_dst, device_src.data(), device_src.size_bytes());
 }
 
 // Device -> Host
-void CPUAllocator::copy_host_to_device(Buffer& device_dst, const void* host_src) const {
+void CPUAllocator::copy_host_to_device(Buffer &device_dst, const void *host_src) const {
     // device_dst must be a CPU buffer
-    if (device_dst.size_bytes() == 0) return;
+    if (device_dst.size_bytes() == 0)
+        return;
     if (device_dst.device_type() != DeviceType::CPU) {
         throw std::runtime_error("CPUAllocator::copy_host_to_device: dst is not a CPU buffer");
     }
-    if (!device_dst.data() || !host_src) return;
+    if (!device_dst.data() || !host_src)
+        return;
     std::memcpy(device_dst.data(), host_src, device_dst.size_bytes());
 }
 
 // Device -> Device (same CPU device)
-void CPUAllocator::copy_device_to_device(Buffer& device_dst, const Buffer& device_src) const {
-    if (device_src.size_bytes() == 0) return;
+void CPUAllocator::copy_device_to_device(Buffer &device_dst, const Buffer &device_src) const {
+    if (device_src.size_bytes() == 0)
+        return;
     if (device_dst.device_type() != DeviceType::CPU || device_src.device_type() != DeviceType::CPU) {
         throw std::runtime_error("CPUAllocator::copy_device_to_device: src and dst must both be CPU buffers");
     }
-    if (!device_dst.data() || !device_src.data()) return;
+    if (!device_dst.data() || !device_src.data())
+        return;
     std::memcpy(device_dst.data(), device_src.data(), device_src.size_bytes());
 }
 

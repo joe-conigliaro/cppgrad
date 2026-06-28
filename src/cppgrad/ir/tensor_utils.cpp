@@ -1,40 +1,44 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include "cppgrad/backend/device_manager.h"
 #include "cppgrad/ir/tensor_utils.h"
+
+#include "cppgrad/backend/device_manager.h"
 #include "cppgrad/ir/ops.h"
 
 namespace cppgrad::ir {
 
-utils::Ref<Tensor> uniform(const std::vector<size_t>& shape, float min, float max, backend::DeviceType device_type, common::DType dtype) {
+utils::Ref<Tensor> uniform(const std::vector<size_t> &shape, float min, float max, backend::DeviceType device_type,
+                           common::DType dtype) {
     return Tensor::make(RandomOp{RandomOpType::UNIFORM, UniformParams{min, max}}, {}, shape, device_type, dtype);
 }
 
-utils::Ref<Tensor> normal(const std::vector<size_t>& shape, float mean, float stddev, backend::DeviceType device_type, common::DType dtype) {
+utils::Ref<Tensor> normal(const std::vector<size_t> &shape, float mean, float stddev, backend::DeviceType device_type,
+                          common::DType dtype) {
     return Tensor::make(RandomOp{RandomOpType::NORMAL, NormalParams{mean, stddev}}, {}, shape, device_type, dtype);
 }
 
-utils::Ref<Tensor> zeros(const std::vector<size_t>& shape, backend::DeviceType device_type, common::DType dtype) {
+utils::Ref<Tensor> zeros(const std::vector<size_t> &shape, backend::DeviceType device_type, common::DType dtype) {
     return full(shape, 0.0, device_type, dtype);
 }
 
-utils::Ref<Tensor> ones(const std::vector<size_t>& shape, backend::DeviceType device_type, common::DType dtype) {
+utils::Ref<Tensor> ones(const std::vector<size_t> &shape, backend::DeviceType device_type, common::DType dtype) {
     return full(shape, 1.0, device_type, dtype);
 }
 
-utils::Ref<Tensor> full(const std::vector<size_t>& shape, double fill_value, backend::DeviceType device_type, common::DType dtype) {
+utils::Ref<Tensor> full(const std::vector<size_t> &shape, double fill_value, backend::DeviceType device_type,
+                        common::DType dtype) {
     return Tensor::make(ConstantOp{ConstantOpType::FULL, fill_value}, {}, shape, device_type, dtype);
 }
 
-utils::Ref<Tensor> zeros_like(const utils::Ref<const Tensor>& t) {
+utils::Ref<Tensor> zeros_like(const utils::Ref<const Tensor> &t) {
     return zeros(t->shape(), t->device_type(), t->dtype());
 }
 
-utils::Ref<Tensor> ones_like(const utils::Ref<const Tensor>& t) {
+utils::Ref<Tensor> ones_like(const utils::Ref<const Tensor> &t) {
     return ones(t->shape(), t->device_type(), t->dtype());
 }
 
-utils::Ref<Tensor> full_like(float fill_value, const utils::Ref<const Tensor>& t) {
+utils::Ref<Tensor> full_like(float fill_value, const utils::Ref<const Tensor> &t) {
     return full(t->shape(), fill_value, t->device_type(), t->dtype());
 }
 
@@ -43,7 +47,7 @@ utils::Ref<Tensor> scalar(double value, backend::DeviceType device_type, common:
     return t;
 }
 
-utils::Ref<Tensor> scalar_like(float v, const utils::Ref<const Tensor>& ref) {
+utils::Ref<Tensor> scalar_like(float v, const utils::Ref<const Tensor> &ref) {
     return scalar(v, ref->device_type(), ref->dtype());
 }
 

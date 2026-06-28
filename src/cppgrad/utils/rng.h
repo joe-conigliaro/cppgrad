@@ -2,15 +2,15 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <random>
 #include <cstdint>
+#include <random>
 
 namespace cppgrad::utils {
 
 // Single global RNG for reproducibility.
-inline std::mt19937& global_rng() {
-  static std::mt19937 rng(42u);
-  return rng;
+inline std::mt19937 &global_rng() {
+    static std::mt19937 rng(42u);
+    return rng;
 }
 
 } // namespace cppgrad::utils

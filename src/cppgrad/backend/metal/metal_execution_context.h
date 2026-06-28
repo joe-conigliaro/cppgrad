@@ -31,14 +31,14 @@ struct ComputeWork {
     size_t byteArgCount = 0;
 
     // Dispatch geometry, filled by the submitting op to match the kernel's ABI.
-    bool       useThreadgroups = false;          // dispatchThreadgroups vs dispatchThreads
-    MTLSize    grid = {1, 1, 1};                  // threads (dispatchThreads) or #threadgroups
-    MTLSize    threadsPerThreadgroup = {1, 1, 1};
-    NSUInteger threadgroupMemoryLength = 0;       // threadgroup(0) bytes (reduce fast path)
+    bool useThreadgroups = false; // dispatchThreadgroups vs dispatchThreads
+    MTLSize grid = {1, 1, 1};     // threads (dispatchThreads) or #threadgroups
+    MTLSize threadsPerThreadgroup = {1, 1, 1};
+    NSUInteger threadgroupMemoryLength = 0; // threadgroup(0) bytes (reduce fast path)
 
     // Append an inline setBytes binding.
-    void add_bytes(NSUInteger index, const void* src, NSUInteger length) {
-        ByteArg& a = byteArgs[byteArgCount++];
+    void add_bytes(NSUInteger index, const void *src, NSUInteger length) {
+        ByteArg &a = byteArgs[byteArgCount++];
         a.index = index;
         a.length = length;
         std::memcpy(a.bytes, src, length);
@@ -46,7 +46,7 @@ struct ComputeWork {
 };
 
 // Encode a single work item into an open compute encoder.
-inline void encode_work(id<MTLComputeCommandEncoder> enc, const ComputeWork& w) {
+inline void encode_work(id<MTLComputeCommandEncoder> enc, const ComputeWork &w) {
     [enc setComputePipelineState:w.pso];
     for (size_t i = 0; i < w.buffers.size(); ++i)
         [enc setBuffer:w.buffers[i].first offset:w.buffers[i].second atIndex:(NSUInteger)i];
@@ -64,8 +64,8 @@ inline void encode_work(id<MTLComputeCommandEncoder> enc, const ComputeWork& w) 
 // of one command buffer (+ wait) per op. Work is flushed at GraphScope boundaries
 // (Backend::flush_pending) and before any readback (the allocator's copy paths).
 class MetalExecutionContext {
-public:
-    MetalExecutionContext(void* native_device, void* native_queue);
+  public:
+    MetalExecutionContext(void *native_device, void *native_queue);
     ~MetalExecutionContext();
 
     // Record a compute work item for later encoding.
@@ -77,7 +77,7 @@ public:
 
     id<MTLCommandQueue> command_queue() const { return _queue; }
 
-private:
+  private:
     id<MTLDevice> _device = nil;
     id<MTLCommandQueue> _queue = nil;
     id<MTLCommandBuffer> _commandBuffer = nil;

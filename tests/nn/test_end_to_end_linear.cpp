@@ -1,26 +1,26 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include <cmath>
-#include <vector>
-#include <random>
 #include <cassert>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <random>
+#include <vector>
+
 #include "cppgrad/backend/device_manager.h"
-#include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor.h"
+#include "cppgrad/ir/tensor_ops.h"
+#include "cppgrad/nn/activations.h"
+#include "cppgrad/nn/functional.h"
 #include "cppgrad/nn/linear.h"
 #include "cppgrad/nn/mlp.h"
-#include "cppgrad/nn/functional.h"
-#include "cppgrad/nn/activations.h"
 #include "cppgrad/optim/adam.h"
 #include "cppgrad/utils/rng.h"
 #include "tests/helpers.h"
 
 using namespace cppgrad;
 
-static float compute_accuracy_pm1(const utils::Ref<ir::Tensor>& logits,
-                                  const utils::Ref<ir::Tensor>& y_true_raw) {
+static float compute_accuracy_pm1(const utils::Ref<ir::Tensor> &logits, const utils::Ref<ir::Tensor> &y_true_raw) {
     // Threshold raw logits at 0, labels in {-1, +1}
     auto pred_vec = logits->to_vector<float>();
     auto y_vec = y_true_raw->to_vector<float>();
@@ -28,31 +28,33 @@ static float compute_accuracy_pm1(const utils::Ref<ir::Tensor>& logits,
     size_t correct = 0;
     for (size_t i = 0; i < n; ++i) {
         float pred_label = pred_vec[i] >= 0.0f ? 1.0f : -1.0f;
-        if (pred_label == y_vec[i]) correct++;
+        if (pred_label == y_vec[i])
+            correct++;
     }
     return (float)correct / (float)n;
 }
 
 // Compute accuracy for BCE-with-logits (targets in {0,1})
-static float compute_accuracy_01(const utils::Ref<ir::Tensor>& logits,
-                                 const utils::Ref<ir::Tensor>& y_true_raw) {
+static float compute_accuracy_01(const utils::Ref<ir::Tensor> &logits, const utils::Ref<ir::Tensor> &y_true_raw) {
     auto pred_vec = logits->to_vector<float>();
     auto y_vec = y_true_raw->to_vector<float>();
     size_t n = y_vec.size();
     size_t correct = 0;
     for (size_t i = 0; i < n; ++i) {
         float pred_label = pred_vec[i] >= 0.0f ? 1.0f : 0.0f; // threshold at 0 on logits
-        if (pred_label == y_vec[i]) correct++;
+        if (pred_label == y_vec[i])
+            correct++;
     }
     return (float)correct / (float)n;
 }
 
 // Data generation: two blobs (separable)
-static void make_blobs_pm1(int n_samples, float spread,
-                           std::vector<float>& X, std::vector<float>& y_pm1) {
+static void make_blobs_pm1(int n_samples, float spread, std::vector<float> &X, std::vector<float> &y_pm1) {
     // Class +1 centered at (1,1), Class -1 centered at (-1,-1)
-    X.clear(); y_pm1.clear();
-    X.reserve(n_samples * 2); y_pm1.reserve(n_samples);
+    X.clear();
+    y_pm1.clear();
+    X.reserve(n_samples * 2);
+    y_pm1.reserve(n_samples);
 
     std::mt19937 gen = utils::global_rng();
     std::normal_distribution<float> noise(0.0f, spread);
@@ -61,25 +63,27 @@ static void make_blobs_pm1(int n_samples, float spread,
     for (int i = 0; i < half; ++i) {
         float x = 1.0f + noise(gen);
         float yy = 1.0f + noise(gen);
-        X.push_back(x); X.push_back(yy);
+        X.push_back(x);
+        X.push_back(yy);
         y_pm1.push_back(1.0f);
     }
     for (int i = 0; i < n_samples - half; ++i) {
         float x = -1.0f + noise(gen);
         float yy = -1.0f + noise(gen);
-        X.push_back(x); X.push_back(yy);
+        X.push_back(x);
+        X.push_back(yy);
         y_pm1.push_back(-1.0f);
     }
 }
 
-static void make_blobs_01(int n_samples, float spread,
-                          std::vector<float>& X, std::vector<float>& y01) {
+static void make_blobs_01(int n_samples, float spread, std::vector<float> &X, std::vector<float> &y01) {
     // Same geometry, labels in {0,1}
     std::vector<float> y_pm1;
     make_blobs_pm1(n_samples, spread, X, y_pm1);
     y01.clear();
     y01.reserve(y_pm1.size());
-    for (float v : y_pm1) y01.push_back(v > 0.0f ? 1.0f : 0.0f);
+    for (float v : y_pm1)
+        y01.push_back(v > 0.0f ? 1.0f : 0.0f);
 }
 
 // Linear + Logistic loss (logistic_loss_pm1)
@@ -110,17 +114,20 @@ static void test_linear_logistic_end_to_end() {
     for (int e = 0; e < epochs; ++e) {
         auto logits = linear(xs);
         auto loss = logistic_loss_pm1(logits, ys); // mean(softplus(-y*z))
-        if (e == 0) loss0 = loss->item<float>();
+        if (e == 0)
+            loss0 = loss->item<float>();
 
         opt.zero_grad();
         loss->backward();
         opt.step();
 
-        if ((e+1) % 50 == 0) {
+        if ((e + 1) % 50 == 0) {
             float l = loss->item<float>();
-            std::cout << "Epoch " << std::setw(3) << (e+1) << " loss=" << std::fixed << std::setprecision(6) << l << "\n";
+            std::cout << "Epoch " << std::setw(3) << (e + 1) << " loss=" << std::fixed << std::setprecision(6) << l
+                      << "\n";
         }
-        if (e == epochs - 1) lossN = loss->item<float>();
+        if (e == epochs - 1)
+            lossN = loss->item<float>();
     }
 
     // Metrics
@@ -160,7 +167,7 @@ static void test_mlp_logistic_end_to_end() {
 
     // Collect parameters
     std::vector<utils::Ref<ir::Tensor>> params;
-    for (auto& m : modules) {
+    for (auto &m : modules) {
         auto ps = m->parameters();
         params.insert(params.end(), ps.begin(), ps.end());
     }
@@ -172,26 +179,30 @@ static void test_mlp_logistic_end_to_end() {
     int epochs = 200;
     float loss0 = 0.0f, lossN = 0.0f;
 
-    auto forward = [&](const utils::Ref<ir::Tensor>& x) {
+    auto forward = [&](const utils::Ref<ir::Tensor> &x) {
         auto cur = x;
-        for (auto& m : modules) cur = (*m)(cur);
+        for (auto &m : modules)
+            cur = (*m)(cur);
         return cur;
     };
 
     for (int e = 0; e < epochs; ++e) {
         auto logits = forward(xs);
         auto loss = logistic_loss_pm1(logits, ys);
-        if (e == 0) loss0 = loss->item<float>();
+        if (e == 0)
+            loss0 = loss->item<float>();
 
         opt.zero_grad();
         loss->backward();
         opt.step();
 
-        if ((e+1) % 50 == 0) {
+        if ((e + 1) % 50 == 0) {
             float l = loss->item<float>();
-            std::cout << "Epoch " << std::setw(3) << (e+1) << " loss=" << std::fixed << std::setprecision(6) << l << "\n";
+            std::cout << "Epoch " << std::setw(3) << (e + 1) << " loss=" << std::fixed << std::setprecision(6) << l
+                      << "\n";
         }
-        if (e == epochs - 1) lossN = loss->item<float>();
+        if (e == epochs - 1)
+            lossN = loss->item<float>();
     }
 
     // Metrics
@@ -239,17 +250,20 @@ static void test_linear_bce_with_logits_end_to_end() {
     for (int e = 0; e < epochs; ++e) {
         auto logits = linear(xs);
         auto loss = bce_with_logits(logits, ys); // mean over samples
-        if (e == 0) loss0 = loss->item<float>();
+        if (e == 0)
+            loss0 = loss->item<float>();
 
         opt.zero_grad();
         loss->backward();
         opt.step();
 
-        if ((e+1) % 50 == 0) {
+        if ((e + 1) % 50 == 0) {
             float l = loss->item<float>();
-            std::cout << "Epoch " << std::setw(3) << (e+1) << " loss=" << std::fixed << std::setprecision(6) << l << "\n";
+            std::cout << "Epoch " << std::setw(3) << (e + 1) << " loss=" << std::fixed << std::setprecision(6) << l
+                      << "\n";
         }
-        if (e == epochs - 1) lossN = loss->item<float>();
+        if (e == epochs - 1)
+            lossN = loss->item<float>();
     }
 
     // Metrics (threshold at 0 on logits)
@@ -282,7 +296,7 @@ int main() {
             std::cerr << "\nEND-TO-END TESTS FAILED: " << g_fail_count << "\n";
             return 1;
         }
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "\nEXCEPTION: " << e.what() << "\n";
         return 2;
     }

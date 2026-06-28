@@ -2,37 +2,35 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include <mutex>
-#include <queue>
+#include <algorithm>
 #include <atomic>
-#include <thread>
-#include <vector>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <algorithm>
-#include <stdexcept>
 #include <functional>
-#include <condition_variable>
+#include <mutex>
+#include <queue>
+#include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace cppgrad::backend::cpu {
 
 // Simple thread pool (single shared queue).
 class ThreadPool {
-public:
+  public:
     ThreadPool() { resize(default_threads()); }
     ~ThreadPool() { shutdown(); }
 
-    ThreadPool(const ThreadPool&) = delete;
-    ThreadPool& operator=(const ThreadPool&) = delete;
+    ThreadPool(const ThreadPool &) = delete;
+    ThreadPool &operator=(const ThreadPool &) = delete;
 
     static unsigned default_threads() {
         unsigned hw = std::thread::hardware_concurrency();
         return hw ? hw : 4u;
     }
 
-    unsigned size() const noexcept {
-        return nworkers_.load(std::memory_order_acquire);
-    }
+    unsigned size() const noexcept { return nworkers_.load(std::memory_order_acquire); }
 
     // Stop current workers (join) and start nthreads new workers.
     void resize(unsigned nthreads) {
@@ -55,7 +53,8 @@ public:
     void enqueue(std::function<void()> f) {
         {
             std::lock_guard<std::mutex> lk(m_);
-            if (stop_) throw std::runtime_error("ThreadPool: enqueue() on stopped pool");
+            if (stop_)
+                throw std::runtime_error("ThreadPool: enqueue() on stopped pool");
             q_.push(std::move(f));
         }
         cv_.notify_one();
@@ -68,8 +67,9 @@ public:
         }
         cv_.notify_all();
 
-        for (auto& t : workers_) {
-            if (t.joinable()) t.join();
+        for (auto &t : workers_) {
+            if (t.joinable())
+                t.join();
         }
         workers_.clear();
 
@@ -82,7 +82,7 @@ public:
         nworkers_.store(0u, std::memory_order_release);
     }
 
-private:
+  private:
     void worker_loop() {
         for (;;) {
             std::function<void()> task;
@@ -91,7 +91,8 @@ private:
                 std::unique_lock<std::mutex> lk(m_);
                 cv_.wait(lk, [&] { return stop_ || !q_.empty(); });
 
-                if (stop_ && q_.empty()) return;
+                if (stop_ && q_.empty())
+                    return;
 
                 task = std::move(q_.front());
                 q_.pop();
@@ -114,11 +115,10 @@ private:
 
 // Scoped task group.
 class TaskGroup {
-public:
-    explicit TaskGroup(ThreadPool& pool) : pool_(pool) {}
+  public:
+    explicit TaskGroup(ThreadPool &pool) : pool_(pool) {}
 
-    template<class Fn>
-    void run(Fn&& fn) {
+    template <class Fn> void run(Fn &&fn) {
         {
             std::lock_guard<std::mutex> lk(m_);
             ++pending_;
@@ -129,7 +129,8 @@ public:
                 f();
             } catch (...) {
                 std::lock_guard<std::mutex> elk(m_);
-                if (!ex_) ex_ = std::current_exception();
+                if (!ex_)
+                    ex_ = std::current_exception();
             }
 
             std::lock_guard<std::mutex> lk(m_);
@@ -141,12 +142,13 @@ public:
 
     void wait() {
         std::unique_lock<std::mutex> lk(m_);
-        cv_.wait(lk, [&]{ return pending_ == 0; });
-        if (ex_) std::rethrow_exception(ex_);
+        cv_.wait(lk, [&] { return pending_ == 0; });
+        if (ex_)
+            std::rethrow_exception(ex_);
     }
 
-private:
-    ThreadPool& pool_;
+  private:
+    ThreadPool &pool_;
     std::mutex m_;
     std::condition_variable cv_;
     // TODO: revisit using atomic to avoid mutex.
@@ -154,13 +156,12 @@ private:
     std::exception_ptr ex_;
 };
 
-
 // Global runtime config.
 struct Runtime {
     ThreadPool pool;
     std::atomic<std::size_t> grain{256};
 
-    static Runtime& instance() {
+    static Runtime &instance() {
         static Runtime rt;
         return rt;
         // Note: we can intentionally never destruct to avoid shutdown-order issues
@@ -174,17 +175,15 @@ struct Runtime {
         pool.resize(n);
     }
 
-    void set_grain(std::size_t g) {
-        grain.store(std::max<std::size_t>(1, g), std::memory_order_release);
-    }
+    void set_grain(std::size_t g) { grain.store(std::max<std::size_t>(1, g), std::memory_order_release); }
 };
 
 // Parallel for over [begin, end). Functor signature: fn(size_t b, size_t e).
-template <typename Fn>
-inline void parallel_for(std::size_t begin, std::size_t end, Fn fn) {
-    auto& rt = Runtime::instance();
+template <typename Fn> inline void parallel_for(std::size_t begin, std::size_t end, Fn fn) {
+    auto &rt = Runtime::instance();
     const std::size_t n = (end > begin) ? (end - begin) : 0;
-    if (n == 0) return;
+    if (n == 0)
+        return;
 
     const unsigned nt = std::max(1u, rt.pool.size());
     const std::size_t g = rt.grain.load(std::memory_order_acquire);
@@ -207,15 +206,17 @@ inline void parallel_for(std::size_t begin, std::size_t end, Fn fn) {
 // Parallel reduce over [0, n). eval(i)->T, combine(T,T)->T.
 template <typename T, typename EvalFn, typename CombineFn>
 inline T parallel_reduce(std::size_t n, EvalFn eval, CombineFn combine, T init) {
-    auto& rt = Runtime::instance();
-    if (n == 0) return init;
+    auto &rt = Runtime::instance();
+    if (n == 0)
+        return init;
 
     const unsigned nt = std::max(1u, rt.pool.size());
     const std::size_t g = rt.grain.load(std::memory_order_acquire);
 
     if (n < g || nt == 1) {
         T acc = init;
-        for (std::size_t i = 0; i < n; ++i) acc = combine(acc, eval(i));
+        for (std::size_t i = 0; i < n; ++i)
+            acc = combine(acc, eval(i));
         return acc;
     }
 
@@ -229,14 +230,16 @@ inline T parallel_reduce(std::size_t n, EvalFn eval, CombineFn combine, T init) 
         const std::size_t end = std::min(n, start + chunk);
         tg.run([&, start, end, task_id] {
             T acc = init;
-            for (std::size_t i = start; i < end; ++i) acc = combine(acc, eval(i));
+            for (std::size_t i = start; i < end; ++i)
+                acc = combine(acc, eval(i));
             partials[task_id] = acc;
         });
     }
     tg.wait();
 
     T out = init;
-    for (const T& p : partials) out = combine(out, p);
+    for (const T &p : partials)
+        out = combine(out, p);
     return out;
 }
 

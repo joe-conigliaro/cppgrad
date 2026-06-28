@@ -1,81 +1,84 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include <set>
-#include <cmath>
-#include <limits>
-#include <vector>
-#include <numeric>
-#include <cstring>
-#include <stdexcept>
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <functional>
+#include <limits>
+#include <numeric>
+#include <set>
+#include <stdexcept>
+#include <vector>
 
-#include "cppgrad/backend/cpu/thread_runtime.h"
-#include "cppgrad/common/bfloat16.h"
 #include "cppgrad/backend/buffer.h"
-#include "cppgrad/utils/shape.h"
+#include "cppgrad/backend/cpu/thread_runtime.h"
 #include "cppgrad/backend/view.h"
+#include "cppgrad/common/bfloat16.h"
+#include "cppgrad/utils/shape.h"
 
 namespace cppgrad::backend::cpu {
 
 // Helpers
 
-template<typename T> inline T* ptr(Buffer& buf) { return static_cast<T*>(buf.data()); }
-template<typename T> inline const T* ptr(const Buffer& buf) { return static_cast<const T*>(buf.data()); }
+template <typename T> inline T *ptr(Buffer &buf) { return static_cast<T *>(buf.data()); }
+template <typename T> inline const T *ptr(const Buffer &buf) { return static_cast<const T *>(buf.data()); }
 
 // Contiguous kernels
 
-template<typename T>
-inline void fill_kernel(Buffer& buf, float value) {
+template <typename T> inline void fill_kernel(Buffer &buf, float value) {
     const size_t n = buf.size_bytes() / sizeof(T);
-    if (!n) return;
-    T* data_ptr = ptr<T>(buf);
+    if (!n)
+        return;
+    T *data_ptr = ptr<T>(buf);
     const T v = static_cast<T>(value);
     std::fill(data_ptr, data_ptr + n, v);
 }
 
-template<typename T, typename Func>
-inline void unary_op_kernel(const Buffer& a, Buffer& out, Func op) {
+template <typename T, typename Func> inline void unary_op_kernel(const Buffer &a, Buffer &out, Func op) {
     const size_t n = out.size_bytes() / sizeof(T);
-    if (!n) return;
-    const T* a_ptr = ptr<const T>(a);
-    T* o_ptr = ptr<T>(out);
-    for (size_t i = 0; i < n; ++i) o_ptr[i] = op(a_ptr[i]);
+    if (!n)
+        return;
+    const T *a_ptr = ptr<const T>(a);
+    T *o_ptr = ptr<T>(out);
+    for (size_t i = 0; i < n; ++i)
+        o_ptr[i] = op(a_ptr[i]);
 }
 
-template<typename T, typename Func>
-inline void binary_op_kernel(const Buffer& a, const Buffer& b, Buffer& out, Func op,
-                             const std::vector<size_t>& shape_a,
-                             const std::vector<size_t>& shape_b,
-                             const std::vector<size_t>& out_shape) {
-    const T* a_ptr = ptr<const T>(a);
-    const T* b_ptr = ptr<const T>(b);
-    T* out_ptr = ptr<T>(out);
+template <typename T, typename Func>
+inline void binary_op_kernel(const Buffer &a, const Buffer &b, Buffer &out, Func op, const std::vector<size_t> &shape_a,
+                             const std::vector<size_t> &shape_b, const std::vector<size_t> &out_shape) {
+    const T *a_ptr = ptr<const T>(a);
+    const T *b_ptr = ptr<const T>(b);
+    T *out_ptr = ptr<T>(out);
     const size_t out_numel = out.size_bytes() / sizeof(T);
-    if (!out_numel) return;
+    if (!out_numel)
+        return;
 
     // Fast path 1: identical shapes (no broadcast)
     if (shape_a == shape_b) {
-        for (size_t i = 0; i < out_numel; ++i) out_ptr[i] = op(a_ptr[i], b_ptr[i]);
+        for (size_t i = 0; i < out_numel; ++i)
+            out_ptr[i] = op(a_ptr[i], b_ptr[i]);
         return;
     }
     // Fast path 2: scalar broadcast
-    const bool a_scalar = shape_a.empty() || (shape_a.size()==1 && shape_a[0]==1);
-    const bool b_scalar = shape_b.empty() || (shape_b.size()==1 && shape_b[0]==1);
+    const bool a_scalar = shape_a.empty() || (shape_a.size() == 1 && shape_a[0] == 1);
+    const bool b_scalar = shape_b.empty() || (shape_b.size() == 1 && shape_b[0] == 1);
     if (a_scalar) {
         const T av = a_ptr[0];
-        for (size_t i = 0; i < out_numel; ++i) out_ptr[i] = op(av, b_ptr[i]);
+        for (size_t i = 0; i < out_numel; ++i)
+            out_ptr[i] = op(av, b_ptr[i]);
         return;
     }
     if (b_scalar) {
         const T bv = b_ptr[0];
-        for (size_t i = 0; i < out_numel; ++i) out_ptr[i] = op(a_ptr[i], bv);
+        for (size_t i = 0; i < out_numel; ++i)
+            out_ptr[i] = op(a_ptr[i], bv);
         return;
     }
 
     // Slow path: general broadcast
-    const auto strides_a   = cppgrad::utils::shape::row_major_strides(shape_a);
-    const auto strides_b   = cppgrad::utils::shape::row_major_strides(shape_b);
+    const auto strides_a = cppgrad::utils::shape::row_major_strides(shape_a);
+    const auto strides_b = cppgrad::utils::shape::row_major_strides(shape_b);
     const auto strides_out = cppgrad::utils::shape::row_major_strides(out_shape);
 
     std::vector<size_t> idx_out(strides_out.size());
@@ -112,34 +115,37 @@ inline void binary_op_kernel(const Buffer& a, const Buffer& b, Buffer& out, Func
             // Map to a indices (right-aligned broadcast)
             for (size_t j = 0; j < shape_a.size(); ++j) {
                 const size_t out_dim_idx = idx_out.size() - 1 - j;
-                const size_t a_dim_idx   = shape_a.size() - 1 - j;
+                const size_t a_dim_idx = shape_a.size() - 1 - j;
                 idx_a[a_dim_idx] = (shape_a[a_dim_idx] == 1) ? 0 : idx_out[out_dim_idx];
             }
 
             // Map to b indices (right-aligned broadcast)
             for (size_t j = 0; j < shape_b.size(); ++j) {
                 const size_t out_dim_idx = idx_out.size() - 1 - j;
-                const size_t b_dim_idx   = shape_b.size() - 1 - j;
+                const size_t b_dim_idx = shape_b.size() - 1 - j;
                 idx_b[b_dim_idx] = (shape_b[b_dim_idx] == 1) ? 0 : idx_out[out_dim_idx];
             }
 
             size_t flat_a = 0, flat_b = 0;
-            for (size_t d = 0; d < idx_a.size(); ++d) flat_a += idx_a[d] * strides_a[d];
-            for (size_t d = 0; d < idx_b.size(); ++d) flat_b += idx_b[d] * strides_b[d];
+            for (size_t d = 0; d < idx_a.size(); ++d)
+                flat_a += idx_a[d] * strides_a[d];
+            for (size_t d = 0; d < idx_b.size(); ++d)
+                flat_b += idx_b[d] * strides_b[d];
 
             out_ptr[i] = op(a_ptr[flat_a], b_ptr[flat_b]);
         }
     });
 }
 
-template<typename T>
-inline void matmul_kernel(const Buffer& a, const Buffer& b, Buffer& out, const std::vector<size_t>& shape_a, const std::vector<size_t>& shape_b) {
+template <typename T>
+inline void matmul_kernel(const Buffer &a, const Buffer &b, Buffer &out, const std::vector<size_t> &shape_a,
+                          const std::vector<size_t> &shape_b) {
     const size_t M = shape_a[0];
     const size_t K = shape_a[1];
     const size_t N = shape_b[1];
-    const T* a_ptr = ptr<const T>(a);
-    const T* b_ptr = ptr<const T>(b);
-    T* out_ptr = ptr<T>(out);
+    const T *a_ptr = ptr<const T>(a);
+    const T *b_ptr = ptr<const T>(b);
+    T *out_ptr = ptr<T>(out);
     for (size_t i = 0; i < M; ++i) {
         for (size_t j = 0; j < N; ++j) {
             T sum_val = 0;
@@ -151,19 +157,20 @@ inline void matmul_kernel(const Buffer& a, const Buffer& b, Buffer& out, const s
     }
 }
 
-template<typename T>
-inline void sum_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& in_shape, const std::vector<int>& axes, bool keep_dims) {
-    T* out_ptr = ptr<T>(out);
+template <typename T>
+inline void sum_kernel(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape, const std::vector<int> &axes,
+                       bool keep_dims) {
+    T *out_ptr = ptr<T>(out);
     std::fill(out_ptr, out_ptr + (out.size_bytes() / sizeof(T)), static_cast<T>(0));
 
     if (axes.empty() || axes.size() == in_shape.size()) {
-        const T* a_ptr = ptr<const T>(a);
+        const T *a_ptr = ptr<const T>(a);
         size_t n = a.size_bytes() / sizeof(T);
         out_ptr[0] = std::accumulate(a_ptr, a_ptr + n, static_cast<T>(0));
         return;
     }
 
-    const T* a_ptr = ptr<const T>(a);
+    const T *a_ptr = ptr<const T>(a);
     auto in_strides = cppgrad::utils::shape::row_major_strides(in_shape);
     size_t n_in = a.size_bytes() / sizeof(T);
 
@@ -171,12 +178,15 @@ inline void sum_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& 
     std::set<int> axes_set(axes.begin(), axes.end());
     if (keep_dims) {
         out_shape_calc = in_shape;
-        for (int axis : axes) out_shape_calc[axis] = 1;
+        for (int axis : axes)
+            out_shape_calc[axis] = 1;
     } else {
         for (size_t i = 0; i < in_shape.size(); ++i) {
-            if (axes_set.find((int)i) == axes_set.end()) out_shape_calc.push_back(in_shape[i]);
+            if (axes_set.find((int)i) == axes_set.end())
+                out_shape_calc.push_back(in_shape[i]);
         }
-        if (out_shape_calc.empty()) out_shape_calc.push_back(1);
+        if (out_shape_calc.empty())
+            out_shape_calc.push_back(1);
     }
     auto out_strides = cppgrad::utils::shape::row_major_strides(out_shape_calc);
 
@@ -185,42 +195,49 @@ inline void sum_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& 
         std::vector<size_t> multi_index_out;
         if (keep_dims) {
             multi_index_out = multi_index_in;
-            for (int axis : axes) multi_index_out[(size_t)axis] = 0;
+            for (int axis : axes)
+                multi_index_out[(size_t)axis] = 0;
         } else {
             for (size_t j = 0; j < in_shape.size(); ++j) {
-                if (axes_set.find((int)j) == axes_set.end()) multi_index_out.push_back(multi_index_in[j]);
+                if (axes_set.find((int)j) == axes_set.end())
+                    multi_index_out.push_back(multi_index_in[j]);
             }
-            if (multi_index_out.empty()) multi_index_out.push_back(0);
+            if (multi_index_out.empty())
+                multi_index_out.push_back(0);
         }
         size_t out_idx = cppgrad::utils::shape::index_from_coords(multi_index_out, out_strides);
         out_ptr[out_idx] += a_ptr[i];
     }
 }
 
-template<typename T>
-inline void max_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& in_shape, const std::vector<int>& axes) {
-    T* out_ptr = ptr<T>(out);
+template <typename T>
+inline void max_kernel(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape,
+                       const std::vector<int> &axes) {
+    T *out_ptr = ptr<T>(out);
     std::fill(out_ptr, out_ptr + (out.size_bytes() / sizeof(T)), std::numeric_limits<T>::lowest());
 
     if (axes.empty() || axes.size() == in_shape.size()) {
-        const T* a_ptr = ptr<const T>(a);
+        const T *a_ptr = ptr<const T>(a);
         size_t n = a.size_bytes() / sizeof(T);
-        if (n > 0) out_ptr[0] = *std::max_element(a_ptr, a_ptr + n);
+        if (n > 0)
+            out_ptr[0] = *std::max_element(a_ptr, a_ptr + n);
         return;
     }
 
-    const T* a_ptr = ptr<const T>(a);
+    const T *a_ptr = ptr<const T>(a);
     auto in_strides = cppgrad::utils::shape::row_major_strides(in_shape);
     size_t n_in = a.size_bytes() / sizeof(T);
 
     std::vector<size_t> out_shape_calc = in_shape;
-    for(int axis : axes) out_shape_calc[(size_t)axis] = 1;
+    for (int axis : axes)
+        out_shape_calc[(size_t)axis] = 1;
     auto out_strides = cppgrad::utils::shape::row_major_strides(out_shape_calc);
 
-    for(size_t i = 0; i < n_in; ++i) {
+    for (size_t i = 0; i < n_in; ++i) {
         auto multi_index_in = cppgrad::utils::shape::coords_from_index(i, in_strides);
         std::vector<size_t> multi_index_out = multi_index_in;
-        for(int axis : axes) multi_index_out[(size_t)axis] = 0;
+        for (int axis : axes)
+            multi_index_out[(size_t)axis] = 0;
         size_t out_idx = cppgrad::utils::shape::index_from_coords(multi_index_out, out_strides);
         out_ptr[out_idx] = std::max(out_ptr[out_idx], a_ptr[i]);
     }
@@ -243,32 +260,38 @@ inline void max_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& 
 //     }
 // }
 
-template<typename T>
-inline void permute_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& in_shape, const std::vector<size_t>& axes) {
-    const T* a_ptr = ptr<const T>(a);
-    T* out_ptr = ptr<T>(out);
+template <typename T>
+inline void permute_kernel(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape,
+                           const std::vector<size_t> &axes) {
+    const T *a_ptr = ptr<const T>(a);
+    T *out_ptr = ptr<T>(out);
     size_t n = a.size_bytes() / sizeof(T);
     auto in_strides = cppgrad::utils::shape::row_major_strides(in_shape);
     std::vector<size_t> out_shape(in_shape.size());
-    for(size_t i = 0; i < axes.size(); ++i) out_shape[i] = in_shape[axes[i]];
+    for (size_t i = 0; i < axes.size(); ++i)
+        out_shape[i] = in_shape[axes[i]];
     auto out_strides = cppgrad::utils::shape::row_major_strides(out_shape);
 
     std::vector<size_t> out_coords;
     for (size_t i = 0; i < n; ++i) {
         cppgrad::utils::shape::coords_from_index_inplace(i, out_strides, out_coords);
         std::vector<size_t> in_coords(axes.size());
-        for (size_t j = 0; j < axes.size(); ++j) in_coords[axes[j]] = out_coords[j];
+        for (size_t j = 0; j < axes.size(); ++j)
+            in_coords[axes[j]] = out_coords[j];
         size_t in_idx = cppgrad::utils::shape::index_from_coords(in_coords, in_strides);
         out_ptr[i] = a_ptr[in_idx];
     }
 }
 
-template<typename T>
-inline void permute_kernel_fast(const Buffer& a, Buffer& out,
-                                const std::vector<size_t>& in_shape,
-                                const std::vector<size_t>& axes) {
+template <typename T>
+inline void permute_kernel_fast(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape,
+                                const std::vector<size_t> &axes) {
     bool is_identity = true;
-    for (size_t i=0;i<axes.size();++i) if (axes[i] != i) { is_identity=false; break; }
+    for (size_t i = 0; i < axes.size(); ++i)
+        if (axes[i] != i) {
+            is_identity = false;
+            break;
+        }
     if (is_identity) {
         std::memcpy(ptr<T>(out), ptr<const T>(a), out.size_bytes());
         return;
@@ -276,10 +299,11 @@ inline void permute_kernel_fast(const Buffer& a, Buffer& out,
     cpu::permute_kernel<T>(a, out, in_shape, axes);
 }
 
-template<typename T>
-inline void broadcast_kernel(const Buffer& a, Buffer& out, const std::vector<size_t>& in_shape, const std::vector<size_t>& out_shape) {
-    const T* a_ptr = ptr<const T>(a);
-    T* out_ptr = ptr<T>(out);
+template <typename T>
+inline void broadcast_kernel(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape,
+                             const std::vector<size_t> &out_shape) {
+    const T *a_ptr = ptr<const T>(a);
+    T *out_ptr = ptr<T>(out);
     size_t n_out = out.size_bytes() / sizeof(T);
     auto in_strides = cppgrad::utils::shape::row_major_strides(in_shape);
     auto out_strides = cppgrad::utils::shape::row_major_strides(out_shape);
@@ -297,14 +321,14 @@ inline void broadcast_kernel(const Buffer& a, Buffer& out, const std::vector<siz
     }
 }
 
-template<typename T>
-inline void broadcast_kernel_fast(const Buffer& a, Buffer& out,
-                                  const std::vector<size_t>& in_shape,
-                                  const std::vector<size_t>& out_shape) {
-    const T* ap = ptr<const T>(a);
-    T* op = ptr<T>(out);
-    const size_t n = out.size_bytes()/sizeof(T);
-    if (!n) return;
+template <typename T>
+inline void broadcast_kernel_fast(const Buffer &a, Buffer &out, const std::vector<size_t> &in_shape,
+                                  const std::vector<size_t> &out_shape) {
+    const T *ap = ptr<const T>(a);
+    T *op = ptr<T>(out);
+    const size_t n = out.size_bytes() / sizeof(T);
+    if (!n)
+        return;
     if (in_shape == out_shape) {
         std::memcpy(op, ap, n * sizeof(T));
         return;
@@ -320,9 +344,10 @@ inline void broadcast_kernel_fast(const Buffer& a, Buffer& out,
 // indirection in the per-element loops of the view kernels. Cold path today (CPU is not the inference
 // backend), so not worth a blanket sweep; do it per-kernel if CPU view perf ever shows up in a profile.
 
-inline size_t index_from_coords(const backend::View& v, const std::vector<size_t>& coords) {
+inline size_t index_from_coords(const backend::View &v, const std::vector<size_t> &coords) {
     size_t idx = v.offset;
-    for (size_t i=0;i<v.rank;++i) idx += coords[i] * static_cast<size_t>(v.strides[i]);
+    for (size_t i = 0; i < v.rank; ++i)
+        idx += coords[i] * static_cast<size_t>(v.strides[i]);
     return idx;
 }
 // inline size_t index_from_coords(const backend::View& v, const std::vector<size_t>& coords) {
@@ -336,27 +361,25 @@ inline size_t index_from_coords(const backend::View& v, const std::vector<size_t
 //     return idx;
 // }
 
-inline void coords_from_linear(size_t lin,
-                               const std::vector<uint32_t>& shape_u32,
-                               std::vector<size_t>& coords) {
+inline void coords_from_linear(size_t lin, const std::vector<uint32_t> &shape_u32, std::vector<size_t> &coords) {
     const size_t rank = shape_u32.size();
     coords.assign(rank, 0);
-    if (rank == 0) return; // scalar
+    if (rank == 0)
+        return; // scalar
     size_t rem = lin;
-    for (size_t d = rank; d-- > 0; ) {
+    for (size_t d = rank; d-- > 0;) {
         const size_t dim = static_cast<size_t>(shape_u32[d]);
         coords[d] = (dim == 0) ? 0 : (rem % dim);
-        rem       = (dim == 0) ? rem : (rem / dim);
+        rem = (dim == 0) ? rem : (rem / dim);
     }
 }
 
-inline void map_out_to_in_coords_broadcast(const std::vector<size_t>& out_coords,
-                                           const backend::View& in_v,
-                                           std::vector<size_t>& in_coords) {
+inline void map_out_to_in_coords_broadcast(const std::vector<size_t> &out_coords, const backend::View &in_v,
+                                           std::vector<size_t> &in_coords) {
     const size_t r_out = out_coords.size(), r_in = in_v.rank;
     in_coords.assign(r_in, 0);
     const size_t off = r_out - r_in;
-    for (size_t i=0;i<r_in;++i) {
+    for (size_t i = 0; i < r_in; ++i) {
         const size_t oc = out_coords[off + i];
         const size_t dim = static_cast<size_t>(in_v.shape[i]);
         in_coords[i] = (dim == 1) ? 0 : oc;
@@ -365,21 +388,25 @@ inline void map_out_to_in_coords_broadcast(const std::vector<size_t>& out_coords
 
 // Stride-aware View kernels (backend::View)
 
-template<typename T, typename UnaryFn>
-inline void unary_view_kernel(const Buffer& a, const backend::View& va,
-                              Buffer& out, const backend::View& vo,
+template <typename T, typename UnaryFn>
+inline void unary_view_kernel(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo,
                               UnaryFn fn) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* op = static_cast<T*>(out.data());
+    const T *ap = static_cast<const T *>(a.data());
+    T *op = static_cast<T *>(out.data());
     const size_t nout = vo.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
-    if (va.is_contiguous() && vo.is_contiguous() &&
-        va.rank == vo.rank && va.is_offset_zero() && vo.is_offset_zero()) {
+    if (va.is_contiguous() && vo.is_contiguous() && va.rank == vo.rank && va.is_offset_zero() && vo.is_offset_zero()) {
         bool same_shape = true;
-        for (uint32_t i=0;i<va.rank;++i) if (va.shape[i] != vo.shape[i]) { same_shape=false; break; }
+        for (uint32_t i = 0; i < va.rank; ++i)
+            if (va.shape[i] != vo.shape[i]) {
+                same_shape = false;
+                break;
+            }
         if (same_shape) {
-            for (size_t i=0;i<nout;++i) op[i] = fn(ap[i]);
+            for (size_t i = 0; i < nout; ++i)
+                op[i] = fn(ap[i]);
             return;
         }
     }
@@ -409,30 +436,35 @@ inline void unary_view_kernel(const Buffer& a, const backend::View& va,
     });
 }
 
-template<typename T, typename BinaryFn>
-inline void binary_view_kernel(const Buffer& a, const backend::View& va,
-                               const Buffer& b, const backend::View& vb,
-                               Buffer& out, const backend::View& vo,
-                               BinaryFn fn) {
-    const T* ap = static_cast<const T*>(a.data());
-    const T* bp = static_cast<const T*>(b.data());
-    T* op = static_cast<T*>(out.data());
+template <typename T, typename BinaryFn>
+inline void binary_view_kernel(const Buffer &a, const backend::View &va, const Buffer &b, const backend::View &vb,
+                               Buffer &out, const backend::View &vo, BinaryFn fn) {
+    const T *ap = static_cast<const T *>(a.data());
+    const T *bp = static_cast<const T *>(b.data());
+    T *op = static_cast<T *>(out.data());
     const size_t nout = vo.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
-    if (va.is_contiguous() && vb.is_contiguous() && vo.is_contiguous() &&
-        va.rank == vb.rank && va.rank == vo.rank &&
+    if (va.is_contiguous() && vb.is_contiguous() && vo.is_contiguous() && va.rank == vb.rank && va.rank == vo.rank &&
         va.is_offset_zero() && vb.is_offset_zero() && vo.is_offset_zero()) {
         bool same_ab = true, same_ao = true;
-        for (uint32_t i=0;i<va.rank;++i) {
-            if (va.shape[i] != vb.shape[i]) { same_ab=false; break; }
+        for (uint32_t i = 0; i < va.rank; ++i) {
+            if (va.shape[i] != vb.shape[i]) {
+                same_ab = false;
+                break;
+            }
         }
         if (same_ab) {
-            for (uint32_t i=0;i<va.rank;++i) {
-                if (va.shape[i] != vo.shape[i]) { same_ao=false; break; }
+            for (uint32_t i = 0; i < va.rank; ++i) {
+                if (va.shape[i] != vo.shape[i]) {
+                    same_ao = false;
+                    break;
+                }
             }
             if (same_ao) {
-                for (size_t i=0;i<nout;++i) op[i] = fn(ap[i], bp[i]);
+                for (size_t i = 0; i < nout; ++i)
+                    op[i] = fn(ap[i], bp[i]);
                 return;
             }
         }
@@ -467,21 +499,19 @@ inline void binary_view_kernel(const Buffer& a, const backend::View& va,
     });
 }
 
-template<typename T, typename ReduceAcc, typename InitFn, typename AccFn>
-inline void reduce_last_axis_kernel_view(
-    const Buffer& a, const backend::View& va,
-    Buffer& out, const backend::View& vo,
-    bool keep_dims,
-    InitFn init, AccFn acc_fn
-) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* op = static_cast<T*>(out.data());
+template <typename T, typename ReduceAcc, typename InitFn, typename AccFn>
+inline void reduce_last_axis_kernel_view(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo,
+                                         bool keep_dims, InitFn init, AccFn acc_fn) {
+    const T *ap = static_cast<const T *>(a.data());
+    T *op = static_cast<T *>(out.data());
 
     const int rank = (int)va.rank;
-    if (rank <= 0) return;
+    if (rank <= 0)
+        return;
 
     const size_t inner = (size_t)va.shape[rank - 1];
-    if (inner == 0) return;
+    if (inner == 0)
+        return;
 
     const size_t outer = va.numel / inner;
 
@@ -490,8 +520,10 @@ inline void reduce_last_axis_kernel_view(
     // Then we map coords -> buffer index using backend::index_from_coords (view strides + offset).
     std::vector<uint32_t> outer_shape_u32;
     outer_shape_u32.reserve((size_t)std::max(1, rank - 1));
-    for (int d = 0; d < rank - 1; ++d) outer_shape_u32.push_back((uint32_t)va.shape[d]);
-    if (outer_shape_u32.empty()) outer_shape_u32.push_back(1);
+    for (int d = 0; d < rank - 1; ++d)
+        outer_shape_u32.push_back((uint32_t)va.shape[d]);
+    if (outer_shape_u32.empty())
+        outer_shape_u32.push_back(1);
 
     std::vector<size_t> ocoords_outer((size_t)std::max(0, rank - 1));
     std::vector<size_t> icoords((size_t)rank);
@@ -500,10 +532,12 @@ inline void reduce_last_axis_kernel_view(
     const size_t s_last = (size_t)va.strides[rank - 1];
 
     for (size_t oi = 0; oi < outer; ++oi) {
-        if (rank - 1 > 0) coords_from_linear(oi, outer_shape_u32, ocoords_outer);
+        if (rank - 1 > 0)
+            coords_from_linear(oi, outer_shape_u32, ocoords_outer);
 
         // input coords = outer coords + last axis = 0
-        for (int d = 0; d < rank - 1; ++d) icoords[(size_t)d] = ocoords_outer[(size_t)d];
+        for (int d = 0; d < rank - 1; ++d)
+            icoords[(size_t)d] = ocoords_outer[(size_t)d];
         icoords[(size_t)(rank - 1)] = 0;
 
         const size_t row_base_in = index_from_coords(va, icoords);
@@ -511,10 +545,12 @@ inline void reduce_last_axis_kernel_view(
         // output coords follow vo's rank convention
         if (!keep_dims) {
             // vo.rank == rank-1
-            for (int d = 0; d < rank - 1; ++d) ocoords_out[(size_t)d] = icoords[(size_t)d];
+            for (int d = 0; d < rank - 1; ++d)
+                ocoords_out[(size_t)d] = icoords[(size_t)d];
         } else {
             // vo.rank == rank
-            for (int d = 0; d < rank - 1; ++d) ocoords_out[(size_t)d] = icoords[(size_t)d];
+            for (int d = 0; d < rank - 1; ++d)
+                ocoords_out[(size_t)d] = icoords[(size_t)d];
             ocoords_out[(size_t)(rank - 1)] = 0;
         }
 
@@ -608,24 +644,21 @@ inline void reduce_last_axis_kernel_view(
 //         optr[oi] = static_cast<T>(tmp);
 //     }
 // }
-template<typename T, typename ReduceAcc, typename InitFn, typename AccFn>
-inline void reduce_view_kernel(
-    const Buffer& a, const backend::View& va,
-    Buffer& out, const backend::View& vo,
-    const std::vector<int>& axes,
-    bool keep_dims,
-    InitFn init, AccFn acc_fn
-) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* optr     = static_cast<T*>(out.data());
+template <typename T, typename ReduceAcc, typename InitFn, typename AccFn>
+inline void reduce_view_kernel(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo,
+                               const std::vector<int> &axes, bool keep_dims, InitFn init, AccFn acc_fn) {
+    const T *ap = static_cast<const T *>(a.data());
+    T *optr = static_cast<T *>(out.data());
 
-    const size_t nin  = va.numel;
+    const size_t nin = va.numel;
     const size_t nout = vo.numel;
 
-    if (nout == 0) return;
+    if (nout == 0)
+        return;
 
     // Initialize output.
-    for (size_t i = 0; i < nout; ++i) optr[(size_t)vo.offset + i] = (T)init();
+    for (size_t i = 0; i < nout; ++i)
+        optr[(size_t)vo.offset + i] = (T)init();
 
     const int rank = (int)va.rank;
 
@@ -633,7 +666,8 @@ inline void reduce_view_kernel(
     auto axes_norm = cppgrad::utils::shape::normalize_unique_sorted_axes(axes, (size_t)rank);
 
     std::vector<bool> reduce_mask((size_t)rank, false);
-    for (int ax : axes_norm) reduce_mask[(size_t)ax] = true;
+    for (int ax : axes_norm)
+        reduce_mask[(size_t)ax] = true;
 
     const bool reduce_all = ((int)axes_norm.size() == rank);
 
@@ -641,7 +675,8 @@ inline void reduce_view_kernel(
     if (reduce_all && va.is_contiguous() && vo.is_contiguous()) {
         ReduceAcc acc = init();
         const size_t base = (size_t)va.offset;
-        for (size_t i = 0; i < nin; ++i) acc_fn(acc, ap[base + i]);
+        for (size_t i = 0; i < nin; ++i)
+            acc_fn(acc, ap[base + i]);
         optr[(size_t)vo.offset] = (T)acc;
         return;
     }
@@ -673,8 +708,11 @@ inline void reduce_view_kernel(
                 ocoords[(size_t)d] = reduce_mask[(size_t)d] ? 0 : icoords[(size_t)d];
             }
         } else {
-            for (int d = 0; d < rank; ++d) if (!reduce_mask[(size_t)d]) ocoords.push_back(icoords[(size_t)d]);
-            if (ocoords.empty()) ocoords.push_back(0);
+            for (int d = 0; d < rank; ++d)
+                if (!reduce_mask[(size_t)d])
+                    ocoords.push_back(icoords[(size_t)d]);
+            if (ocoords.empty())
+                ocoords.push_back(0);
         }
         const size_t ai = index_from_coords(va, icoords);
         const size_t oi = index_from_coords(vo, ocoords);
@@ -684,23 +722,23 @@ inline void reduce_view_kernel(
     }
 }
 
-template<typename T>
-inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
-                               const Buffer& b, const backend::View& vb,
-                               Buffer& out, const backend::View& vo) {
-    const T* ap = static_cast<const T*>(a.data());
-    const T* bp = static_cast<const T*>(b.data());
-    T*       op = static_cast<T*>(out.data());
+template <typename T>
+inline void matmul_view_kernel(const Buffer &a, const backend::View &va, const Buffer &b, const backend::View &vb,
+                               Buffer &out, const backend::View &vo) {
+    const T *ap = static_cast<const T *>(a.data());
+    const T *bp = static_cast<const T *>(b.data());
+    T *op = static_cast<T *>(out.data());
 
     if (va.rank != 2 || vb.rank != 2 || vo.rank != 2)
         throw std::runtime_error("matmul_view_kernel: rank-2 required");
 
-    const size_t M  = (size_t)va.shape[0];
-    const size_t K  = (size_t)va.shape[1];
+    const size_t M = (size_t)va.shape[0];
+    const size_t K = (size_t)va.shape[1];
     const size_t Kb = (size_t)vb.shape[0];
-    const size_t N  = (size_t)vb.shape[1];
+    const size_t N = (size_t)vb.shape[1];
 
-    if (K != Kb) throw std::runtime_error("matmul_view_kernel: inner dims mismatch");
+    if (K != Kb)
+        throw std::runtime_error("matmul_view_kernel: inner dims mismatch");
     if (vo.shape[0] != va.shape[0] || vo.shape[1] != vb.shape[1])
         throw std::runtime_error("matmul_view_kernel: out shape mismatch");
 
@@ -710,22 +748,23 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
 
     // Fast path 1: NN (A NN, B NN, Out NN)
     if (fast_packed && vb.is_rowmaj_nn_2d()) {
-        const T* ap0 = ap + (size_t)va.offset;
-        const T* bp0 = bp + (size_t)vb.offset;
-        T*       op0 = op + (size_t)vo.offset;
+        const T *ap0 = ap + (size_t)va.offset;
+        const T *bp0 = bp + (size_t)vb.offset;
+        T *op0 = op + (size_t)vo.offset;
 
         // Tune these. Start here on M2:
-        constexpr size_t BJ = 128;  // j tile
-        constexpr size_t BK = 64;   // k tile
+        constexpr size_t BJ = 128; // j tile
+        constexpr size_t BK = 64;  // k tile
 
         cpu::parallel_for((size_t)0, M, [&](size_t i0, size_t i1) {
             for (size_t i = i0; i < i1; ++i) {
-                T* crow = op0 + i * N;
+                T *crow = op0 + i * N;
 
                 // Initialize output row once
-                for (size_t j = 0; j < N; ++j) crow[j] = T(0);
+                for (size_t j = 0; j < N; ++j)
+                    crow[j] = T(0);
 
-                const T* arow = ap0 + i * K;
+                const T *arow = ap0 + i * K;
 
                 for (size_t kk = 0; kk < K; kk += BK) {
                     const size_t kend = std::min(K, kk + BK);
@@ -735,7 +774,7 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
 
                         for (size_t k = kk; k < kend; ++k) {
                             const T a = arow[k];
-                            const T* brow = bp0 + k * N; // contiguous across j
+                            const T *brow = bp0 + k * N; // contiguous across j
 
                             for (size_t j = jb; j < jend; ++j) {
                                 crow[j] += a * brow[j];
@@ -752,9 +791,9 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
     // Fast path 2: TN (A NN, B TN, Out NN)
     // B is laid out as strides [1, K], so bp0[j*K + k] is contiguous over k.
     if (fast_packed && vb.is_rowmaj_tn_2d()) {
-        const T* ap0 = ap + (size_t)va.offset;
-        const T* bp0 = bp + (size_t)vb.offset;
-        T*       op0 = op + (size_t)vo.offset;
+        const T *ap0 = ap + (size_t)va.offset;
+        const T *bp0 = bp + (size_t)vb.offset;
+        T *op0 = op + (size_t)vo.offset;
 
         cpu::parallel_for(0, M, [&](size_t i0, size_t i1) {
             for (size_t i = i0; i < i1; ++i) {
@@ -777,17 +816,16 @@ inline void matmul_view_kernel(const Buffer& a, const backend::View& va,
 
     // Generic stride-aware path
     for (size_t i = 0; i < M; ++i) {
-        const size_t a_row = (size_t)va.offset + i*(size_t)va.strides[0];
-        const size_t o_row = (size_t)vo.offset + i*(size_t)vo.strides[0];
+        const size_t a_row = (size_t)va.offset + i * (size_t)va.strides[0];
+        const size_t o_row = (size_t)vo.offset + i * (size_t)vo.strides[0];
 
         for (size_t j = 0; j < N; ++j) {
-            const size_t b_col = (size_t)vb.offset + j*(size_t)vb.strides[1];
+            const size_t b_col = (size_t)vb.offset + j * (size_t)vb.strides[1];
             T sum = 0;
             for (size_t k = 0; k < K; ++k) {
-                sum += ap[a_row + k*(size_t)va.strides[1]] *
-                       bp[b_col + k*(size_t)vb.strides[0]];
+                sum += ap[a_row + k * (size_t)va.strides[1]] * bp[b_col + k * (size_t)vb.strides[0]];
             }
-            op[o_row + j*(size_t)vo.strides[1]] = sum;
+            op[o_row + j * (size_t)vo.strides[1]] = sum;
         }
     }
 }
@@ -804,12 +842,11 @@ inline float bf16_to_f32(uint16_t h) {
 // Lets large model weights stay resident as bf16 (half the memory of fp32) while activations
 // and accumulation remain float32. Stride-aware generic path (correctness first; the tiled
 // fast paths in matmul_view_kernel can be specialised later if this becomes hot).
-inline void matmul_view_kernel_f32_bf16(const Buffer& a, const backend::View& va,
-                                        const Buffer& b, const backend::View& vb,
-                                        Buffer& out, const backend::View& vo) {
-    const float*    ap = static_cast<const float*>(a.data());
-    const uint16_t* bp = static_cast<const uint16_t*>(b.data());
-    float*          op = static_cast<float*>(out.data());
+inline void matmul_view_kernel_f32_bf16(const Buffer &a, const backend::View &va, const Buffer &b,
+                                        const backend::View &vb, Buffer &out, const backend::View &vo) {
+    const float *ap = static_cast<const float *>(a.data());
+    const uint16_t *bp = static_cast<const uint16_t *>(b.data());
+    float *op = static_cast<float *>(out.data());
 
     const size_t M = (size_t)va.shape[0];
     const size_t K = (size_t)va.shape[1];
@@ -823,8 +860,7 @@ inline void matmul_view_kernel_f32_bf16(const Buffer& a, const backend::View& va
                 const size_t b_col = (size_t)vb.offset + j * (size_t)vb.strides[1];
                 float sum = 0.0f;
                 for (size_t k = 0; k < K; ++k) {
-                    sum += ap[a_row + k * (size_t)va.strides[1]] *
-                           bf16_to_f32(bp[b_col + k * (size_t)vb.strides[0]]);
+                    sum += ap[a_row + k * (size_t)va.strides[1]] * bf16_to_f32(bp[b_col + k * (size_t)vb.strides[0]]);
                 }
                 op[o_row + j * (size_t)vo.strides[1]] = sum;
             }
@@ -832,21 +868,29 @@ inline void matmul_view_kernel_f32_bf16(const Buffer& a, const backend::View& va
     });
 }
 
-template<typename T>
-inline void permute_view_kernel(const Buffer& a, const backend::View& va,
-                                Buffer& out, const backend::View& vo,
-                                const std::vector<size_t>& axes) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* op = static_cast<T*>(out.data());
-    const size_t nout = out.size_bytes()/sizeof(T);
-    if (!nout) return;
+template <typename T>
+inline void permute_view_kernel(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo,
+                                const std::vector<size_t> &axes) {
+    const T *ap = static_cast<const T *>(a.data());
+    T *op = static_cast<T *>(out.data());
+    const size_t nout = out.size_bytes() / sizeof(T);
+    if (!nout)
+        return;
 
     bool identity = true;
-    for (size_t i=0;i<axes.size();++i) if (axes[i]!=i) { identity=false; break; }
-    if (identity && va.is_contiguous() && vo.is_contiguous() &&
-        va.rank == vo.rank && va.is_offset_zero() && vo.is_offset_zero()) {
+    for (size_t i = 0; i < axes.size(); ++i)
+        if (axes[i] != i) {
+            identity = false;
+            break;
+        }
+    if (identity && va.is_contiguous() && vo.is_contiguous() && va.rank == vo.rank && va.is_offset_zero() &&
+        vo.is_offset_zero()) {
         bool same = true;
-        for (uint32_t i=0;i<va.rank;++i) if (va.shape[i]!=vo.shape[i]) { same=false; break; }
+        for (uint32_t i = 0; i < va.rank; ++i)
+            if (va.shape[i] != vo.shape[i]) {
+                same = false;
+                break;
+            }
         if (same) {
             std::memcpy(op, ap, out.size_bytes());
             return;
@@ -855,27 +899,31 @@ inline void permute_view_kernel(const Buffer& a, const backend::View& va,
 
     std::vector<size_t> ocoords, icoords(axes.size());
     std::vector<uint32_t> out_shape(vo.shape, vo.shape + vo.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
-        for (size_t d=0; d<axes.size(); ++d) icoords[axes[d]] = ocoords[d];
+        for (size_t d = 0; d < axes.size(); ++d)
+            icoords[axes[d]] = ocoords[d];
         const size_t ai = index_from_coords(va, icoords);
         const size_t oi = index_from_coords(vo, ocoords);
         op[oi] = ap[ai];
     }
 }
 
-template<typename T>
-inline void broadcast_view_kernel(const Buffer& a, const backend::View& va,
-                                  Buffer& out, const backend::View& vo) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* op = static_cast<T*>(out.data());
-    const size_t nout = out.size_bytes()/sizeof(T);
-    if (!nout) return;
+template <typename T>
+inline void broadcast_view_kernel(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo) {
+    const T *ap = static_cast<const T *>(a.data());
+    T *op = static_cast<T *>(out.data());
+    const size_t nout = out.size_bytes() / sizeof(T);
+    if (!nout)
+        return;
 
-    if (va.is_contiguous() && vo.is_contiguous() &&
-        va.rank == vo.rank && va.is_offset_zero() && vo.is_offset_zero()) {
+    if (va.is_contiguous() && vo.is_contiguous() && va.rank == vo.rank && va.is_offset_zero() && vo.is_offset_zero()) {
         bool same = true;
-        for (uint32_t i=0;i<va.rank;++i) if (va.shape[i]!=vo.shape[i]) { same=false; break; }
+        for (uint32_t i = 0; i < va.rank; ++i)
+            if (va.shape[i] != vo.shape[i]) {
+                same = false;
+                break;
+            }
         if (same) {
             std::memcpy(op, ap, out.size_bytes());
             return;
@@ -884,7 +932,7 @@ inline void broadcast_view_kernel(const Buffer& a, const backend::View& va,
 
     std::vector<size_t> ocoords, icoords;
     std::vector<uint32_t> out_shape(vo.shape, vo.shape + vo.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
         map_out_to_in_coords_broadcast(ocoords, va, icoords);
         const size_t ai = index_from_coords(va, icoords);
@@ -893,56 +941,59 @@ inline void broadcast_view_kernel(const Buffer& a, const backend::View& va,
     }
 }
 
-template<typename T>
-inline void slice_forward_view_kernel(const Buffer& a, const backend::View& va,
-                                      Buffer& out, const backend::View& vo,
-                                      const std::vector<size_t>& begin) {
-    const T* ap = static_cast<const T*>(a.data());
-    T* op = static_cast<T*>(out.data());
-    const size_t nout = out.size_bytes()/sizeof(T);
-    if (!nout) return;
+template <typename T>
+inline void slice_forward_view_kernel(const Buffer &a, const backend::View &va, Buffer &out, const backend::View &vo,
+                                      const std::vector<size_t> &begin) {
+    const T *ap = static_cast<const T *>(a.data());
+    T *op = static_cast<T *>(out.data());
+    const size_t nout = out.size_bytes() / sizeof(T);
+    if (!nout)
+        return;
 
     std::vector<size_t> ocoords, icoords(begin.size());
     std::vector<uint32_t> out_shape(vo.shape, vo.shape + vo.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
-        for (size_t d=0; d<begin.size(); ++d) icoords[d] = begin[d] + ocoords[d];
+        for (size_t d = 0; d < begin.size(); ++d)
+            icoords[d] = begin[d] + ocoords[d];
         const size_t ai = index_from_coords(va, icoords);
         const size_t oi = index_from_coords(vo, ocoords);
         op[oi] = ap[ai];
     }
 }
 
-template<typename T>
-inline void slice_backward_scatter_add_view_kernel(const Buffer& grad_out, const backend::View& vgo,
-                                                   Buffer& grad_in,  const backend::View& vgi,
-                                                   const std::vector<size_t>& begin) {
-    const T* gop = static_cast<const T*>(grad_out.data());
-    T* gip = static_cast<T*>(grad_in.data());
-    const size_t nout = grad_out.size_bytes()/sizeof(T);
-    if (!nout) return;
+template <typename T>
+inline void slice_backward_scatter_add_view_kernel(const Buffer &grad_out, const backend::View &vgo, Buffer &grad_in,
+                                                   const backend::View &vgi, const std::vector<size_t> &begin) {
+    const T *gop = static_cast<const T *>(grad_out.data());
+    T *gip = static_cast<T *>(grad_in.data());
+    const size_t nout = grad_out.size_bytes() / sizeof(T);
+    if (!nout)
+        return;
 
     std::vector<size_t> ocoords, icoords(begin.size());
     std::vector<uint32_t> out_shape(vgo.shape, vgo.shape + vgo.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
-        for (size_t d=0; d<begin.size(); ++d) icoords[d] = begin[d] + ocoords[d];
+        for (size_t d = 0; d < begin.size(); ++d)
+            icoords[d] = begin[d] + ocoords[d];
         const size_t gi = index_from_coords(vgi, icoords);
         const size_t go = index_from_coords(vgo, ocoords);
         gip[gi] += gop[go];
     }
 }
 
-template<typename T>
-inline void copy_view_kernel(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) {
-    const T* sp = static_cast<const T*>(src.data());
-    T*       dp = static_cast<T*>(dst.data());
+template <typename T>
+inline void copy_view_kernel(const Buffer &src, const backend::View &vs, Buffer &dst, const backend::View &vd) {
+    const T *sp = static_cast<const T *>(src.data());
+    T *dp = static_cast<T *>(dst.data());
     const size_t nout = vd.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
     std::vector<size_t> ocoords, icoords;
     std::vector<uint32_t> out_shape(vd.shape, vd.shape + vd.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
         map_out_to_in_coords_broadcast(ocoords, vs, icoords);
         const size_t si = index_from_coords(vs, icoords);
@@ -954,16 +1005,17 @@ inline void copy_view_kernel(const Buffer& src, const backend::View& vs, Buffer&
 // Dtype-converting copy_view: src element type SrcT, dst element type DstT (e.g. fp32 -> bf16 for a
 // bf16 KV cache write). Same indexing as copy_view_kernel; the assignment goes through the element
 // types' conversions (DstT must be constructible from SrcT).
-template<typename SrcT, typename DstT>
-inline void copy_view_convert_kernel(const Buffer& src, const backend::View& vs, Buffer& dst, const backend::View& vd) {
-    const SrcT* sp = static_cast<const SrcT*>(src.data());
-    DstT*       dp = static_cast<DstT*>(dst.data());
+template <typename SrcT, typename DstT>
+inline void copy_view_convert_kernel(const Buffer &src, const backend::View &vs, Buffer &dst, const backend::View &vd) {
+    const SrcT *sp = static_cast<const SrcT *>(src.data());
+    DstT *dp = static_cast<DstT *>(dst.data());
     const size_t nout = vd.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
     std::vector<size_t> ocoords, icoords;
     std::vector<uint32_t> out_shape(vd.shape, vd.shape + vd.rank);
-    for (size_t lin=0; lin<nout; ++lin) {
+    for (size_t lin = 0; lin < nout; ++lin) {
         coords_from_linear(lin, out_shape, ocoords);
         map_out_to_in_coords_broadcast(ocoords, vs, icoords);
         const size_t si = index_from_coords(vs, icoords);
@@ -973,19 +1025,20 @@ inline void copy_view_convert_kernel(const Buffer& src, const backend::View& vs,
 }
 
 // Concat: copy each input's elements to the correct position in output along axis
-template<typename T>
-inline void concat_kernel(const std::vector<const Buffer*>& inputs, const std::vector<backend::View>& input_views,
-                          Buffer& out, const backend::View& out_view, int axis) {
+template <typename T>
+inline void concat_kernel(const std::vector<const Buffer *> &inputs, const std::vector<backend::View> &input_views,
+                          Buffer &out, const backend::View &out_view, int axis) {
     const size_t rank = out_view.rank;
     const size_t nout = out_view.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
-    std::vector<const T*> in_ptrs;
+    std::vector<const T *> in_ptrs;
     in_ptrs.reserve(inputs.size());
     for (size_t i = 0; i < inputs.size(); ++i) {
-        in_ptrs.push_back(static_cast<const T*>(inputs[i]->data()));
+        in_ptrs.push_back(static_cast<const T *>(inputs[i]->data()));
     }
-    T* op = static_cast<T*>(out.data());
+    T *op = static_cast<T *>(out.data());
 
     // Compute cumulative sizes along concat axis
     std::vector<size_t> cum_sizes(inputs.size() + 1, 0);
@@ -1003,7 +1056,8 @@ inline void concat_kernel(const std::vector<const Buffer*>& inputs, const std::v
             size_t coord_axis = ocoords[axis];
             size_t input_idx = 0;
             for (; input_idx < inputs.size(); ++input_idx) {
-                if (coord_axis < cum_sizes[input_idx + 1]) break;
+                if (coord_axis < cum_sizes[input_idx + 1])
+                    break;
             }
 
             // Map to input coordinates
@@ -1023,18 +1077,17 @@ inline void concat_kernel(const std::vector<const Buffer*>& inputs, const std::v
     });
 }
 // Gather along axis: select elements at integer indices along specified axis
-template<typename T>
-inline void gather_axis_kernel(const Buffer &tensor, const backend::View &tv,
-                                const Buffer &indices_buf,
-                                Buffer &out, const backend::View &ov,
-                                int axis) {
+template <typename T>
+inline void gather_axis_kernel(const Buffer &tensor, const backend::View &tv, const Buffer &indices_buf, Buffer &out,
+                               const backend::View &ov, int axis) {
     const size_t rank = ov.rank;
     const size_t nout = ov.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
-    const T* t_data = static_cast<const T*>(tensor.data());
-    const int32_t* idx_data = static_cast<const int32_t*>(indices_buf.data());
-    T* o_data = static_cast<T*>(out.data());
+    const T *t_data = static_cast<const T *>(tensor.data());
+    const int32_t *idx_data = static_cast<const int32_t *>(indices_buf.data());
+    T *o_data = static_cast<T *>(out.data());
 
     std::vector<uint32_t> out_shape(ov.shape, ov.shape + ov.rank);
 
@@ -1061,19 +1114,18 @@ inline void gather_axis_kernel(const Buffer &tensor, const backend::View &tv,
 }
 
 // Scatter along axis: replace elements at indexed positions with values
-template<typename T>
-inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv,
-                                 const Buffer &values, const backend::View &vv,
-                                 const Buffer &indices_buf,
-                                 Buffer &out, const backend::View &ov,
-                                 int axis) {
+template <typename T>
+inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv, const Buffer &values,
+                                const backend::View &vv, const Buffer &indices_buf, Buffer &out,
+                                const backend::View &ov, int axis) {
     const size_t rank = ov.rank;
     const size_t nout = ov.numel;
-    if (!nout) return;
+    if (!nout)
+        return;
 
     // First copy base to output
-    const T* b_data = static_cast<const T*>(base.data());
-    T* o_data = static_cast<T*>(out.data());
+    const T *b_data = static_cast<const T *>(base.data());
+    T *o_data = static_cast<T *>(out.data());
 
     // Copy base using view
     if (bv.is_identity() && ov.is_identity()) {
@@ -1092,8 +1144,8 @@ inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv,
     }
 
     // Then scatter values at indexed positions
-    const T* v_data = static_cast<const T*>(values.data());
-    const int32_t* idx_data = static_cast<const int32_t*>(indices_buf.data());
+    const T *v_data = static_cast<const T *>(values.data());
+    const int32_t *idx_data = static_cast<const int32_t *>(indices_buf.data());
 
     std::vector<uint32_t> val_shape(vv.shape, vv.shape + vv.rank);
 
@@ -1107,7 +1159,8 @@ inline void scatter_axis_kernel(const Buffer &base, const backend::View &bv,
 
             // The index along the scatter axis tells us which index to use
             int32_t scatter_idx = idx_data[vcoords[axis]];
-            if (scatter_idx < 0) continue;
+            if (scatter_idx < 0)
+                continue;
 
             // Map value coords to output coords
             std::vector<size_t> ocoords(rank);

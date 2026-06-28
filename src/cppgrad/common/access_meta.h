@@ -2,12 +2,13 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
+#include <stdexcept>
 #include <string>
 #include <vector>
-#include <stdexcept>
+
 #include "cppgrad/utils/shape.h"
 
-namespace cppgrad::common { 
+namespace cppgrad::common {
 
 // Access metadata (logical view of buffer)
 struct AccessMeta {
@@ -29,7 +30,7 @@ struct AccessMeta {
         return m;
     }
 
-    static AccessMeta reshape_from(const AccessMeta& p, const std::vector<size_t>& new_shape) {
+    static AccessMeta reshape_from(const AccessMeta &p, const std::vector<size_t> &new_shape) {
         if (cppgrad::utils::vector::numel(p.shape) != cppgrad::utils::vector::numel(new_shape))
             throw std::runtime_error("reshape_from: numel mismatch");
 
@@ -44,18 +45,20 @@ struct AccessMeta {
         return a;
     }
 
-    static AccessMeta permute_from(const AccessMeta& p, const std::vector<size_t>& perm) {
-        if (perm.size() != p.shape.size()) throw std::invalid_argument("permute: rank mismatch");
+    static AccessMeta permute_from(const AccessMeta &p, const std::vector<size_t> &perm) {
+        if (perm.size() != p.shape.size())
+            throw std::invalid_argument("permute: rank mismatch");
         std::vector<char> seen(perm.size(), 0);
-        for (size_t i=0;i<perm.size();++i) {
-            if (perm[i] >= perm.size() || seen[perm[i]]) throw std::invalid_argument("permute: invalid permutation");
+        for (size_t i = 0; i < perm.size(); ++i) {
+            if (perm[i] >= perm.size() || seen[perm[i]])
+                throw std::invalid_argument("permute: invalid permutation");
             seen[perm[i]] = 1;
         }
         AccessMeta a;
         a.shape.resize(perm.size());
         a.strides.resize(perm.size());
-        for (size_t i=0;i<perm.size();++i) {
-            a.shape[i]   = p.shape[perm[i]];
+        for (size_t i = 0; i < perm.size(); ++i) {
+            a.shape[i] = p.shape[perm[i]];
             a.strides[i] = p.strides[perm[i]];
         }
         a.offset = p.offset;
@@ -63,19 +66,19 @@ struct AccessMeta {
         return a;
     }
 
-    static AccessMeta broadcast_from(const AccessMeta& p, const std::vector<size_t>& out_shape) {
+    static AccessMeta broadcast_from(const AccessMeta &p, const std::vector<size_t> &out_shape) {
         const size_t r_in = p.shape.size();
         const size_t r_out = out_shape.size();
 
         AccessMeta a;
-        a.shape   = out_shape;
+        a.shape = out_shape;
         a.strides.resize(r_out);
-        a.offset  = p.offset;
+        a.offset = p.offset;
 
         // Right-align p.shape against out_shape
         for (size_t i = 0; i < r_out; ++i) {
             size_t out_dim = out_shape[r_out - 1 - i];
-            size_t in_dim  = (i < r_in) ? p.shape[r_in - 1 - i] : 1;
+            size_t in_dim = (i < r_in) ? p.shape[r_in - 1 - i] : 1;
             size_t in_stride = (i < r_in) ? p.strides[r_in - 1 - i] : 0;
 
             if (in_dim == out_dim) {
@@ -84,9 +87,11 @@ struct AccessMeta {
                 a.strides[r_out - 1 - i] = 0; // broadcast
             } else {
                 std::string msg = "broadcast_from: incompatible shapes. from={";
-                for (auto d : p.shape) msg += std::to_string(d) + " ";
-                msg += "}, to={"  ;
-                for (auto d : out_shape) msg += std::to_string(d) + " ";
+                for (auto d : p.shape)
+                    msg += std::to_string(d) + " ";
+                msg += "}, to={";
+                for (auto d : out_shape)
+                    msg += std::to_string(d) + " ";
                 msg += "} at dim offset " + std::to_string(i);
                 throw std::runtime_error(msg);
             }
@@ -95,10 +100,10 @@ struct AccessMeta {
         return a;
     }
 
-    static AccessMeta slice_from(const AccessMeta& p, const std::vector<size_t>& begin,
-                                 const std::vector<size_t>& end, const std::vector<size_t>& step) {
+    static AccessMeta slice_from(const AccessMeta &p, const std::vector<size_t> &begin, const std::vector<size_t> &end,
+                                 const std::vector<size_t> &step) {
         const size_t R = p.shape.size();
-        if (begin.size()!=R || end.size()!=R || step.size()!=R)
+        if (begin.size() != R || end.size() != R || step.size() != R)
             throw std::invalid_argument("slice_from: rank mismatch");
 
         AccessMeta a;
@@ -106,27 +111,27 @@ struct AccessMeta {
         a.strides.resize(R);
         size_t new_offset = p.offset;
 
-        for (size_t d=0; d<R; ++d) {
-            if (begin[d] > end[d] || end[d] > p.shape[d]) throw std::out_of_range("slice_from: invalid begin/end");
-            if (step[d] == 0) throw std::invalid_argument("slice_from: step=0");
+        for (size_t d = 0; d < R; ++d) {
+            if (begin[d] > end[d] || end[d] > p.shape[d])
+                throw std::out_of_range("slice_from: invalid begin/end");
+            if (step[d] == 0)
+                throw std::invalid_argument("slice_from: step=0");
             // Compute size along d
             size_t len = (end[d] > begin[d]) ? ((end[d] - begin[d] + step[d] - 1) / step[d]) : 0;
-            a.shape[d]   = len;
+            a.shape[d] = len;
             a.strides[d] = p.strides[d] * step[d];
-            new_offset  += begin[d] * p.strides[d];
+            new_offset += begin[d] * p.strides[d];
         }
         a.offset = new_offset;
         a.recompute_contiguity();
         return a;
     }
 
-    void recompute_contiguity() {
-        contiguous = cppgrad::utils::shape::is_row_major_contiguous(shape, strides);
-    }
+    void recompute_contiguity() { contiguous = cppgrad::utils::shape::is_row_major_contiguous(shape, strides); }
 
-    std::vector<size_t> shape;     // logical dims
-    std::vector<size_t> strides;   // in elements
-    size_t offset = 0;             // in elements
+    std::vector<size_t> shape;   // logical dims
+    std::vector<size_t> strides; // in elements
+    size_t offset = 0;           // in elements
     bool contiguous = true;
 };
 

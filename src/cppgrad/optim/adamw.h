@@ -4,9 +4,10 @@
 
 #include <memory>
 #include <vector>
+
 #include "cppgrad/ir/tensor.h"
-#include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor_operators.h"
+#include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/optim/optim.h"
 
 namespace cppgrad::optim {
@@ -21,21 +22,23 @@ namespace cppgrad::optim {
 //
 // Note: Unlike classical L2, AdamW applies decay directly on parameters,
 class AdamW : public Adam {
-public:
-    AdamW(std::vector<utils::Ref<ir::Tensor>> params, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float eps = 1e-8f, float weight_decay = 0.01f)
-    : Adam(std::move(params), lr, beta1, beta2, eps, weight_decay) {}
+  public:
+    AdamW(std::vector<utils::Ref<ir::Tensor>> params, float lr = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f,
+          float eps = 1e-8f, float weight_decay = 0.01f)
+        : Adam(std::move(params), lr, beta1, beta2, eps, weight_decay) {}
 
-protected:
+  protected:
     // Do not add wd*p into the gradient for AdamW
-    utils::Ref<ir::Tensor>
-    apply_weight_decay_to_grad(const utils::Ref<ir::Tensor>& g, const utils::Ref<ir::Tensor>& /*p*/, float /*wd*/) override {
+    utils::Ref<ir::Tensor> apply_weight_decay_to_grad(const utils::Ref<ir::Tensor> &g,
+                                                      const utils::Ref<ir::Tensor> & /*p*/, float /*wd*/) override {
         return g;
     }
 
     // Decoupled weight decay: p ← p − step_core − lr * wd * p
-    utils::Ref<ir::Tensor>
-    update_parameters(const utils::Ref<ir::Tensor>& p, const utils::Ref<ir::Tensor>& step_core, float wd) override {
-        if (wd == 0.0f) return p - step_core;
+    utils::Ref<ir::Tensor> update_parameters(const utils::Ref<ir::Tensor> &p, const utils::Ref<ir::Tensor> &step_core,
+                                             float wd) override {
+        if (wd == 0.0f)
+            return p - step_core;
         auto decay = p * (this->_lr * wd);
         return p - decay - step_core;
     }

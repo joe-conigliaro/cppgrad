@@ -8,14 +8,15 @@
 // sub-chunk size and sequence length -- including S not a multiple of the sub-chunk, S=1 (decode),
 // and a non-null incoming state. Tiny random tensors; CPU and Metal.
 #include <cmath>
-#include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <vector>
+
 #include "cppgrad/backend/device_manager.h"
+#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor_utils.h"
-#include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/nn/functional.h"
 
 using namespace cppgrad;
@@ -26,17 +27,21 @@ static float frand(float lo, float hi) {
     float u = (g_seed >> 8) / float(1u << 24);
     return lo + u * (hi - lo);
 }
-static utils::Ref<ir::Tensor> rnd(const std::vector<size_t>& shape, float lo, float hi, backend::DeviceType dev) {
-    size_t n = 1; for (auto d : shape) n *= d;
-    std::vector<float> v(n); for (auto& x : v) x = frand(lo, hi);
+static utils::Ref<ir::Tensor> rnd(const std::vector<size_t> &shape, float lo, float hi, backend::DeviceType dev) {
+    size_t n = 1;
+    for (auto d : shape)
+        n *= d;
+    std::vector<float> v(n);
+    for (auto &x : v)
+        x = frand(lo, hi);
     return ir::from_vector<float>(v, shape, dev);
 }
 
 // Sequential reference, operating on [BH,S,*] (matches qwen3_block.h:504-520 exactly).
-static utils::Ref<ir::Tensor> seq_scan(const utils::Ref<ir::Tensor>& q, const utils::Ref<ir::Tensor>& k,
-                                       const utils::Ref<ir::Tensor>& v, const utils::Ref<ir::Tensor>& decay,
-                                       const utils::Ref<ir::Tensor>& beta, const utils::Ref<ir::Tensor>& state_in,
-                                       utils::Ref<ir::Tensor>& state_out) {
+static utils::Ref<ir::Tensor> seq_scan(const utils::Ref<ir::Tensor> &q, const utils::Ref<ir::Tensor> &k,
+                                       const utils::Ref<ir::Tensor> &v, const utils::Ref<ir::Tensor> &decay,
+                                       const utils::Ref<ir::Tensor> &beta, const utils::Ref<ir::Tensor> &state_in,
+                                       utils::Ref<ir::Tensor> &state_out) {
     auto dev = q->device_type();
     size_t BH = q->shape()[0], S = q->shape()[1], dk = q->shape()[2], dv = v->shape()[2];
     utils::Ref<ir::Tensor> state = state_in ? state_in : ir::zeros({BH, dk, dv}, dev);
@@ -46,10 +51,10 @@ static utils::Ref<ir::Tensor> seq_scan(const utils::Ref<ir::Tensor>& q, const ut
         auto kt = ir::reshape(ir::slice(k, {0, t, 0}, {BH, t + 1, dk}), {BH, dk});
         auto vt = ir::reshape(ir::slice(v, {0, t, 0}, {BH, t + 1, dv}), {BH, dv});
         auto dt = ir::reshape(ir::slice(decay, {0, t}, {BH, t + 1}), {BH, 1, 1});
-        auto bt = ir::reshape(ir::slice(beta,  {0, t}, {BH, t + 1}), {BH, 1});
+        auto bt = ir::reshape(ir::slice(beta, {0, t}, {BH, t + 1}), {BH, 1});
         auto kt_c = ir::reshape_view(kt, {BH, dk, 1});
         state = state * dt;
-        auto kv = ir::sum(state * kt_c, {1});                 // [BH,dv]
+        auto kv = ir::sum(state * kt_c, {1}); // [BH,dv]
         auto delta = (vt - kv) * bt;
         state = state + kt_c * ir::reshape_view(delta, {BH, 1, dv});
         auto qt_c = ir::reshape_view(qt, {BH, dk, 1});
@@ -57,16 +62,20 @@ static utils::Ref<ir::Tensor> seq_scan(const utils::Ref<ir::Tensor>& q, const ut
     }
     state_out = state;
     utils::Ref<ir::Tensor> o = outs[0];
-    for (size_t t = 1; t < S; ++t) o = ir::concat(o, outs[t], 1);
+    for (size_t t = 1; t < S; ++t)
+        o = ir::concat(o, outs[t], 1);
     return o;
 }
 
-static float max_abs_diff(const std::vector<float>& a, const std::vector<float>& b) {
-    float w = 0.f; for (size_t i = 0; i < a.size(); ++i) w = std::max(w, std::abs(a[i] - b[i])); return w;
+static float max_abs_diff(const std::vector<float> &a, const std::vector<float> &b) {
+    float w = 0.f;
+    for (size_t i = 0; i < a.size(); ++i)
+        w = std::max(w, std::abs(a[i] - b[i]));
+    return w;
 }
 
-static bool run_case(backend::DeviceType dev, size_t BH, size_t dk, size_t dv, size_t S,
-                     size_t chunk, bool with_state, float gmax = 0.3f, float tol = 1e-3f) {
+static bool run_case(backend::DeviceType dev, size_t BH, size_t dk, size_t dv, size_t S, size_t chunk, bool with_state,
+                     float gmax = 0.3f, float tol = 1e-3f) {
     ir::NoGradScope ng;
     auto q = rnd({BH, S, dk}, -1.f, 1.f, dev);
     auto k = rnd({BH, S, dk}, -1.f, 1.f, dev);
@@ -74,11 +83,11 @@ static bool run_case(backend::DeviceType dev, size_t BH, size_t dk, size_t dv, s
     // decay = exp(g), g in [-gmax,-0.01]; beta in (0,1). Larger gmax => faster decay => bigger
     // exp(-cumsum(g)) within a chunk (the numerical-stability stressor).
     auto decay = ir::exp(ir::neg(rnd({BH, S}, 0.01f, gmax, dev)));
-    auto beta  = rnd({BH, S}, 0.1f, 0.9f, dev);
+    auto beta = rnd({BH, S}, 0.1f, 0.9f, dev);
     utils::Ref<ir::Tensor> st_in = with_state ? rnd({BH, dk, dv}, -0.5f, 0.5f, dev) : nullptr;
 
     utils::Ref<ir::Tensor> so_seq, so_chunk;
-    auto o_seq   = seq_scan(q, k, v, decay, beta, st_in, so_seq);
+    auto o_seq = seq_scan(q, k, v, decay, beta, st_in, so_seq);
     auto o_chunk = nn::functional::gated_delta_scan_chunked(q, k, v, decay, beta, st_in, so_chunk, chunk);
 
     float od = max_abs_diff(o_seq->to_vector<float>(), o_chunk->to_vector<float>());

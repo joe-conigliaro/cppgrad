@@ -9,16 +9,16 @@ namespace mslp {
 struct View32 {
     ushort rank;
     ushort pad;
-    uint   offset;
-    uint   flags;
-    uint   shape[8];
-    uint   strides[8];
+    uint offset;
+    uint flags;
+    uint shape[8];
+    uint strides[8];
 };
 
 struct UnaryParams {
     View32 in_v;
     View32 out_v;
-    uint   n;
+    uint n;
     ushort op; // 0:relu 1:exp 2:log 3:neg 4:tanh
     ushort pad2;
 };
@@ -27,7 +27,7 @@ struct BinaryParams {
     View32 a_v;
     View32 b_v;
     View32 o_v;
-    uint   n;
+    uint n;
     ushort op; // 0:add 1:sub 2:mul 3:div 4:pow 5:eq 6:gt 7:min 8:max
     ushort pad2;
 };
@@ -36,24 +36,24 @@ struct MatmulParams {
     View32 a_v;
     View32 b_v;
     View32 o_v;
-    uint   M, K, N;
-    uint   batch;
-    uint   a_batch_stride;
-    uint   b_batch_stride;
-    uint   o_batch_stride;
+    uint M, K, N;
+    uint batch;
+    uint a_batch_stride;
+    uint b_batch_stride;
+    uint o_batch_stride;
 };
 
 struct BroadcastParams {
     View32 in_v;
     View32 out_v;
-    uint   n;
-    uint   pad3;
+    uint n;
+    uint pad3;
 };
 
 struct PermuteParams {
     View32 in_v;
     View32 out_v;
-    uint   n;
+    uint n;
     ushort axes[8]; // out_d -> in_d
     ushort pad_axes[8];
 };
@@ -61,23 +61,23 @@ struct PermuteParams {
 struct SliceParams {
     View32 in_v;
     View32 out_v;
-    uint   n;
-    uint   begin[8];
-    uint   step[8];
+    uint n;
+    uint begin[8];
+    uint step[8];
 };
 
 struct CopyViewParams {
     View32 src_v;
     View32 dst_v;
-    uint   n;
-    uint   pad4;
+    uint n;
+    uint pad4;
 };
 
 struct ReduceFastParams {
     View32 in_v;
     View32 out_v;
-    uint   inner; // last axis size
-    ushort op;    // 0 sum, 1 max
+    uint inner; // last axis size
+    ushort op;  // 0 sum, 1 max
     ushort pad5;
 };
 
@@ -86,33 +86,33 @@ struct ReduceGeneralParams {
     View32 out_v;
     ushort op; // 0 sum, 1 max
     ushort pad6;
-    uint   out_total;
-    uchar  is_reduce_axis[8]; // 0/1 flags per input axis
-    uchar  pad7[8];
+    uint out_total;
+    uchar is_reduce_axis[8]; // 0/1 flags per input axis
+    uchar pad7[8];
 };
 
 struct ConcatParams {
-    View32  in_views[2];
-    View32  out_v;
-    uint    n;
-    uint    num_inputs;
-    uint    axis;
-    uint    cum_sizes[3]; // cum_sizes[0]=0, cum_sizes[1]=in0[axis], cum_sizes[2]=total
+    View32 in_views[2];
+    View32 out_v;
+    uint n;
+    uint num_inputs;
+    uint axis;
+    uint cum_sizes[3]; // cum_sizes[0]=0, cum_sizes[1]=in0[axis], cum_sizes[2]=total
 };
 
 struct GatherAxisParams {
-    View32  tensor_v;
-    View32  out_v;
-    uint    n;
-    uint    axis;
+    View32 tensor_v;
+    View32 out_v;
+    uint n;
+    uint axis;
 };
 
 struct ScatterAxisParams {
-    View32  base_v;
-    View32  values_v;
-    View32  out_v;
-    uint    nval;
-    uint    axis;
+    View32 base_v;
+    View32 values_v;
+    View32 out_v;
+    uint nval;
+    uint axis;
 };
 
 } // namespace mslp
@@ -121,42 +121,38 @@ struct ScatterAxisParams {
 
 // Helpers for index and coord decoding with proper address-space overloads
 
-inline uint index_from_coords(thread const uint* coords,
-                              thread const mslp::View32& v) {
+inline uint index_from_coords(thread const uint *coords, thread const mslp::View32 &v) {
     uint idx = v.offset;
-    for (ushort i=0;i<v.rank;++i) idx += coords[i] * v.strides[i];
+    for (ushort i = 0; i < v.rank; ++i)
+        idx += coords[i] * v.strides[i];
     return idx;
 }
 
-inline uint index_from_coords(thread const uint* coords,
-                              constant mslp::View32& v) {
+inline uint index_from_coords(thread const uint *coords, constant mslp::View32 &v) {
     uint idx = v.offset;
-    for (ushort i=0;i<v.rank;++i) idx += coords[i] * v.strides[i];
+    for (ushort i = 0; i < v.rank; ++i)
+        idx += coords[i] * v.strides[i];
     return idx;
 }
 
-inline void coords_from_linear(uint lin,
-                               thread const uint* shape,
-                               ushort rank,
-                               thread uint* coords) {
+inline void coords_from_linear(uint lin, thread const uint *shape, ushort rank, thread uint *coords) {
     uint rem = lin;
     for (ushort i = 0; i < rank; ++i) {
         uint stride = 1;
-        for (ushort j = i + 1; j < rank; ++j) stride *= shape[j];
+        for (ushort j = i + 1; j < rank; ++j)
+            stride *= shape[j];
         uint c = (stride > 0) ? (rem / stride) : 0;
         coords[i] = c;
         rem -= c * stride;
     }
 }
 
-inline void coords_from_linear(uint lin,
-                               constant uint* shape,
-                               ushort rank,
-                               thread uint* coords) {
+inline void coords_from_linear(uint lin, constant uint *shape, ushort rank, thread uint *coords) {
     uint rem = lin;
     for (ushort i = 0; i < rank; ++i) {
         uint stride = 1;
-        for (ushort j = i + 1; j < rank; ++j) stride *= shape[j];
+        for (ushort j = i + 1; j < rank; ++j)
+            stride *= shape[j];
         uint c = (stride > 0) ? (rem / stride) : 0;
         coords[i] = c;
         rem -= c * stride;
@@ -165,38 +161,57 @@ inline void coords_from_linear(uint lin,
 
 inline float apply_unary(float x, ushort op) {
     switch (op) {
-        case 0: return (x > 0.0f) ? x : 0.0f;
-        case 1: return exp(x);
-        case 2: return log(x);
-        case 3: return -x;
-        case 4: return tanh(x);
-        case 5: return sin(x);
-        case 6: return cos(x);
-        case 7: { float s = 1.0f / (1.0f + exp(-x)); return x * s; }  // SILU = x*sigmoid(x)
-        case 8: return 1.0f / (1.0f + exp(-x));                       // SIGMOID
+    case 0:
+        return (x > 0.0f) ? x : 0.0f;
+    case 1:
+        return exp(x);
+    case 2:
+        return log(x);
+    case 3:
+        return -x;
+    case 4:
+        return tanh(x);
+    case 5:
+        return sin(x);
+    case 6:
+        return cos(x);
+    case 7: {
+        float s = 1.0f / (1.0f + exp(-x));
+        return x * s;
+    } // SILU = x*sigmoid(x)
+    case 8:
+        return 1.0f / (1.0f + exp(-x)); // SIGMOID
     }
     return x;
 }
 
 inline float apply_binary(float a, float b, ushort op) {
     switch (op) {
-        case 0: return a + b;
-        case 1: return a - b;
-        case 2: return a * b;
-        case 3: return a / b;
-        case 4: return pow(a, b);
-        case 5: return (a == b) ? 1.0f : 0.0f;
-        case 6: return (a > b) ? 1.0f : 0.0f;
-        case 7: return fmin(a, b);
-        case 8: return fmax(a, b);
+    case 0:
+        return a + b;
+    case 1:
+        return a - b;
+    case 2:
+        return a * b;
+    case 3:
+        return a / b;
+    case 4:
+        return pow(a, b);
+    case 5:
+        return (a == b) ? 1.0f : 0.0f;
+    case 6:
+        return (a > b) ? 1.0f : 0.0f;
+    case 7:
+        return fmin(a, b);
+    case 8:
+        return fmax(a, b);
     }
     return 0.0f;
 }
 
 // Fill & Random
 
-kernel void fill(device float* out [[buffer(0)]],
-                 constant float& value [[buffer(1)]],
+kernel void fill(device float *out [[buffer(0)]], constant float &value [[buffer(1)]],
                  uint gid [[thread_position_in_grid]]) {
     out[gid] = value;
 }
@@ -204,24 +219,21 @@ kernel void fill(device float* out [[buffer(0)]],
 inline uint lcg(uint x) { return 1664525u * x + 1013904223u; }
 inline float u01_from_state(uint s) { return float(s & 0xFFFFFFu) / float(0xFFFFFFu); }
 
-kernel void rand_uniform(device float* out [[buffer(0)]],
-                         constant float& min_val [[buffer(1)]],
-                         constant float& max_val [[buffer(2)]],
-                         constant uint& seed [[buffer(3)]],
+kernel void rand_uniform(device float *out [[buffer(0)]], constant float &min_val [[buffer(1)]],
+                         constant float &max_val [[buffer(2)]], constant uint &seed [[buffer(3)]],
                          uint gid [[thread_position_in_grid]]) {
     uint s = lcg(seed ^ (gid + 1u));
     float r = u01_from_state(s);
     out[gid] = min_val + r * (max_val - min_val);
 }
 
-kernel void rand_normal(device float* out [[buffer(0)]],
-                        constant float& mean [[buffer(1)]],
-                        constant float& stddev [[buffer(2)]],
-                        constant uint& seed [[buffer(3)]],
-                        constant uint& out_numel [[buffer(4)]],
-                        uint gid [[thread_position_in_grid]]) {
-    if (gid >= out_numel) return;
-    if ((gid & 1u) != 0u) return;
+kernel void rand_normal(device float *out [[buffer(0)]], constant float &mean [[buffer(1)]],
+                        constant float &stddev [[buffer(2)]], constant uint &seed [[buffer(3)]],
+                        constant uint &out_numel [[buffer(4)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= out_numel)
+        return;
+    if ((gid & 1u) != 0u)
+        return;
     uint s1 = lcg(seed ^ (gid + 1u));
     uint s2 = lcg(seed ^ (gid + 2u));
     float u1 = fmax(u01_from_state(s1), 1e-7f);
@@ -231,15 +243,16 @@ kernel void rand_normal(device float* out [[buffer(0)]],
     float z0 = r * cos(theta), z1 = r * sin(theta);
     out[gid] = mean + stddev * z0;
     uint next = gid + 1u;
-    if (next < out_numel) out[next] = mean + stddev * z1;
+    if (next < out_numel)
+        out[next] = mean + stddev * z1;
 }
 
 // Unary (stride-aware). Templated on element type T (fp32 or bf16): elements upconvert to float,
 // the math runs in float, the result downconverts to T -- a bf16 activation costs half the traffic.
 template <typename T>
-static inline void unary_view_impl(device const T* in_buf, device T* out_buf,
-                                   constant mslp::UnaryParams& P, uint gid) {
-    if (gid >= P.n) return;
+static inline void unary_view_impl(device const T *in_buf, device T *out_buf, constant mslp::UnaryParams &P, uint gid) {
+    if (gid >= P.n)
+        return;
 
     uint ocoords[8];
     coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
@@ -247,14 +260,19 @@ static inline void unary_view_impl(device const T* in_buf, device T* out_buf,
     uint icoords[8];
     bool same = (P.in_v.rank == P.out_v.rank);
     if (same) {
-        for (ushort i=0;i<P.in_v.rank;++i) if (P.in_v.shape[i] != P.out_v.shape[i]) { same=false; break; }
+        for (ushort i = 0; i < P.in_v.rank; ++i)
+            if (P.in_v.shape[i] != P.out_v.shape[i]) {
+                same = false;
+                break;
+            }
     }
     if (same) {
-        for (ushort i=0;i<P.in_v.rank;++i) icoords[i] = ocoords[i];
+        for (ushort i = 0; i < P.in_v.rank; ++i)
+            icoords[i] = ocoords[i];
     } else {
         ushort r_in = P.in_v.rank, r_out = P.out_v.rank;
         ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
-        for (ushort i=0;i<r_in;++i) {
+        for (ushort i = 0; i < r_in; ++i) {
             uint oc = ocoords[off + i];
             icoords[i] = (P.in_v.shape[i] == 1) ? 0 : oc;
         }
@@ -265,25 +283,22 @@ static inline void unary_view_impl(device const T* in_buf, device T* out_buf,
     out_buf[oi] = (T)apply_unary((float)in_buf[ai], P.op);
 }
 
-kernel void unary_view_f32(device const float* in_buf [[buffer(0)]],
-                           device float* out_buf [[buffer(1)]],
-                           constant mslp::UnaryParams& P [[buffer(2)]],
-                           uint gid [[thread_position_in_grid]]) {
+kernel void unary_view_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                           constant mslp::UnaryParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
     unary_view_impl<float>(in_buf, out_buf, P, gid);
 }
 
-kernel void unary_view_bf16(device const bfloat* in_buf [[buffer(0)]],
-                            device bfloat* out_buf [[buffer(1)]],
-                            constant mslp::UnaryParams& P [[buffer(2)]],
-                            uint gid [[thread_position_in_grid]]) {
+kernel void unary_view_bf16(device const bfloat *in_buf [[buffer(0)]], device bfloat *out_buf [[buffer(1)]],
+                            constant mslp::UnaryParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
     unary_view_impl<bfloat>(in_buf, out_buf, P, gid);
 }
 
 // Binary (stride-aware). Templated on element type T (fp32 or bf16).
 template <typename T>
-static inline void binary_view_impl(device const T* a_buf, device const T* b_buf, device T* out_buf,
-                                    constant mslp::BinaryParams& P, uint gid) {
-    if (gid >= P.n) return;
+static inline void binary_view_impl(device const T *a_buf, device const T *b_buf, device T *out_buf,
+                                    constant mslp::BinaryParams &P, uint gid) {
+    if (gid >= P.n)
+        return;
 
     uint ocoords[8];
     coords_from_linear(gid, P.o_v.shape, P.o_v.rank, ocoords);
@@ -294,14 +309,19 @@ static inline void binary_view_impl(device const T* a_buf, device const T* b_buf
     {
         bool same = (P.a_v.rank == P.o_v.rank);
         if (same) {
-            for (ushort i=0;i<P.a_v.rank;++i) if (P.a_v.shape[i] != P.o_v.shape[i]) { same=false; break; }
+            for (ushort i = 0; i < P.a_v.rank; ++i)
+                if (P.a_v.shape[i] != P.o_v.shape[i]) {
+                    same = false;
+                    break;
+                }
         }
         if (same) {
-            for (ushort i=0;i<P.a_v.rank;++i) acoords[i] = ocoords[i];
+            for (ushort i = 0; i < P.a_v.rank; ++i)
+                acoords[i] = ocoords[i];
         } else {
             ushort r_in = P.a_v.rank, r_out = P.o_v.rank;
             ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
-            for (ushort i=0; i<r_in; ++i) {
+            for (ushort i = 0; i < r_in; ++i) {
                 uint oc = ocoords[off + i];
                 acoords[i] = (P.a_v.shape[i] == 1) ? 0 : oc;
             }
@@ -312,14 +332,19 @@ static inline void binary_view_impl(device const T* a_buf, device const T* b_buf
     {
         bool same = (P.b_v.rank == P.o_v.rank);
         if (same) {
-            for (ushort i=0;i<P.b_v.rank;++i) if (P.b_v.shape[i] != P.o_v.shape[i]) { same=false; break; }
+            for (ushort i = 0; i < P.b_v.rank; ++i)
+                if (P.b_v.shape[i] != P.o_v.shape[i]) {
+                    same = false;
+                    break;
+                }
         }
         if (same) {
-            for (ushort i=0;i<P.b_v.rank;++i) bcoords[i] = ocoords[i];
+            for (ushort i = 0; i < P.b_v.rank; ++i)
+                bcoords[i] = ocoords[i];
         } else {
             ushort r_in = P.b_v.rank, r_out = P.o_v.rank;
             ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
-            for (ushort i=0; i<r_in; ++i) {
+            for (ushort i = 0; i < r_in; ++i) {
                 uint oc = ocoords[off + i];
                 bcoords[i] = (P.b_v.shape[i] == 1) ? 0 : oc;
             }
@@ -333,18 +358,14 @@ static inline void binary_view_impl(device const T* a_buf, device const T* b_buf
     out_buf[oi] = (T)apply_binary((float)a_buf[ai], (float)b_buf[bi], P.op);
 }
 
-kernel void binary_view_f32(device const float* a_buf [[buffer(0)]],
-                            device const float* b_buf [[buffer(1)]],
-                            device float* out_buf [[buffer(2)]],
-                            constant mslp::BinaryParams& P [[buffer(3)]],
+kernel void binary_view_f32(device const float *a_buf [[buffer(0)]], device const float *b_buf [[buffer(1)]],
+                            device float *out_buf [[buffer(2)]], constant mslp::BinaryParams &P [[buffer(3)]],
                             uint gid [[thread_position_in_grid]]) {
     binary_view_impl<float>(a_buf, b_buf, out_buf, P, gid);
 }
 
-kernel void binary_view_bf16(device const bfloat* a_buf [[buffer(0)]],
-                             device const bfloat* b_buf [[buffer(1)]],
-                             device bfloat* out_buf [[buffer(2)]],
-                             constant mslp::BinaryParams& P [[buffer(3)]],
+kernel void binary_view_bf16(device const bfloat *a_buf [[buffer(0)]], device const bfloat *b_buf [[buffer(1)]],
+                             device bfloat *out_buf [[buffer(2)]], constant mslp::BinaryParams &P [[buffer(3)]],
                              uint gid [[thread_position_in_grid]]) {
     binary_view_impl<bfloat>(a_buf, b_buf, out_buf, P, gid);
 }
@@ -354,16 +375,14 @@ kernel void binary_view_bf16(device const bfloat* a_buf [[buffer(0)]],
 // Naive strided matmul, generic over the weight (B) element type. float(B[...]) is a no-op
 // for float and a native hardware upconvert for bfloat - so the same kernel serves fp32
 // weights and bf16 weights (fp32 activations, fp32 accumulate/output) with no special-casing.
-template<typename TB>
-static inline void matmul_view_impl(device const float* A,
-                                    device const TB* B,
-                                    device float* C,
-                                    constant mslp::MatmulParams& P,
-                                    uint3 tid) {
+template <typename TB>
+static inline void matmul_view_impl(device const float *A, device const TB *B, device float *C,
+                                    constant mslp::MatmulParams &P, uint3 tid) {
     uint batch = tid.z;
     uint i = tid.y;
     uint j = tid.x;
-    if (i >= P.M || j >= P.N || batch >= P.batch) return;
+    if (i >= P.M || j >= P.N || batch >= P.batch)
+        return;
 
     // Decompose the linear batch index over the leading dims [0, rank-2) using each operand's own
     // strides (0-stride => broadcast). A single collapsed batch stride is wrong for >1 batch dim.
@@ -382,25 +401,21 @@ static inline void matmul_view_impl(device const float* A,
     uint om = P.o_v.strides[R - 2], on = P.o_v.strides[R - 1];
 
     float sum = 0.0f;
-    for (uint k=0; k<P.K; ++k) {
-        sum += A[a_off + i*am + k*ak] * float(B[b_off + k*bk + j*bn]);
+    for (uint k = 0; k < P.K; ++k) {
+        sum += A[a_off + i * am + k * ak] * float(B[b_off + k * bk + j * bn]);
     }
-    C[o_off + i*om + j*on] = sum;
+    C[o_off + i * om + j * on] = sum;
 }
 
-kernel void matmul_view_f32(device const float* A [[buffer(0)]],
-                            device const float* B [[buffer(1)]],
-                            device float* C [[buffer(2)]],
-                            constant mslp::MatmulParams& P [[buffer(3)]],
+kernel void matmul_view_f32(device const float *A [[buffer(0)]], device const float *B [[buffer(1)]],
+                            device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
                             uint3 tid [[thread_position_in_grid]]) {
     matmul_view_impl<float>(A, B, C, P, tid);
 }
 
 // Mixed precision: fp32 activations x bf16 weights -> fp32 (lets big weights stay bf16).
-kernel void matmul_view_bf16w(device const float* A [[buffer(0)]],
-                              device const bfloat* B [[buffer(1)]],
-                              device float* C [[buffer(2)]],
-                              constant mslp::MatmulParams& P [[buffer(3)]],
+kernel void matmul_view_bf16w(device const float *A [[buffer(0)]], device const bfloat *B [[buffer(1)]],
+                              device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
                               uint3 tid [[thread_position_in_grid]]) {
     matmul_view_impl<bfloat>(A, B, C, P, tid);
 }
@@ -410,14 +425,12 @@ kernel void matmul_view_bf16w(device const float* A [[buffer(0)]],
 #define TN 16
 #define TK 16
 
-kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
-                             device const float* B [[buffer(1)]],
-                             device float* C [[buffer(2)]],
-                             constant mslp::MatmulParams& P [[buffer(3)]],
-                             uint3 tid  [[thread_position_in_threadgroup]],
-                             uint3 bid  [[threadgroup_position_in_grid]]) {
+kernel void matmul_tiled_f32(device const float *A [[buffer(0)]], device const float *B [[buffer(1)]],
+                             device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
+                             uint3 tid [[thread_position_in_threadgroup]], uint3 bid [[threadgroup_position_in_grid]]) {
     uint batch = bid.z;
-    if (batch >= P.batch) return;
+    if (batch >= P.batch)
+        return;
 
     uint a_off = P.a_v.offset + batch * P.a_batch_stride;
     uint b_off = P.b_v.offset + batch * P.b_batch_stride;
@@ -429,27 +442,29 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
 
     // Accumulator
     float acc[TM][TN];
-    for (uint i=0;i<TM;++i) for (uint j=0;j<TN;++j) acc[i][j] = 0.0f;
+    for (uint i = 0; i < TM; ++i)
+        for (uint j = 0; j < TN; ++j)
+            acc[i][j] = 0.0f;
 
     threadgroup float Asub[TM][TK];
     threadgroup float Bsub[TK][TN];
 
     uint tiles = (P.K + TK - 1) / TK;
 
-    for (uint t=0; t<tiles; ++t) {
+    for (uint t = 0; t < tiles; ++t) {
         uint a_row = row0 + tid.y;
-        uint a_col = t*TK + tid.x;
+        uint a_col = t * TK + tid.x;
         if (a_row < P.M && a_col < P.K) {
-            uint a_idx = a_off + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
+            uint a_idx = a_off + a_row * P.a_v.strides[0] + a_col * P.a_v.strides[1];
             Asub[tid.y][tid.x] = A[a_idx];
         } else {
             Asub[tid.y][tid.x] = 0.0f;
         }
 
-        uint b_row = t*TK + tid.y;
+        uint b_row = t * TK + tid.y;
         uint b_col = col0 + tid.x;
         if (b_row < P.K && b_col < P.N) {
-            uint b_idx = b_off + b_row*P.b_v.strides[0] + b_col*P.b_v.strides[1];
+            uint b_idx = b_off + b_row * P.b_v.strides[0] + b_col * P.b_v.strides[1];
             Bsub[tid.y][tid.x] = B[b_idx];
         } else {
             Bsub[tid.y][tid.x] = 0.0f;
@@ -457,9 +472,9 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        for (uint k=0;k<TK;++k) {
+        for (uint k = 0; k < TK; ++k) {
             float a = Asub[tid.y][k];
-            for (uint n=0;n<TN;++n) {
+            for (uint n = 0; n < TN; ++n) {
                 acc[tid.y][n] += a * Bsub[k][n];
             }
         }
@@ -468,10 +483,10 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
     }
 
     uint out_row = row0 + tid.y;
-    for (uint n=0;n<TN;++n) {
+    for (uint n = 0; n < TN; ++n) {
         uint out_col = col0 + n;
         if (out_row < P.M && out_col < P.N) {
-            uint c_idx = o_off + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
+            uint c_idx = o_off + out_row * P.o_v.strides[0] + out_col * P.o_v.strides[1];
             C[c_idx] = acc[tid.y][n];
         }
     }
@@ -482,14 +497,13 @@ kernel void matmul_tiled_f32(device const float* A [[buffer(0)]],
 // #define TN 16
 // #define TK 16
 
-kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
-                                device const float* B [[buffer(1)]],
-                                device float* C [[buffer(2)]],
-                                constant mslp::MatmulParams& P [[buffer(3)]],
+kernel void matmul_tiled_tn_f32(device const float *A [[buffer(0)]], device const float *B [[buffer(1)]],
+                                device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
                                 uint3 tid [[thread_position_in_threadgroup]],
                                 uint3 bid [[threadgroup_position_in_grid]]) {
     uint batch = bid.z;
-    if (batch >= P.batch) return;
+    if (batch >= P.batch)
+        return;
 
     uint a_off = P.a_v.offset + batch * P.a_batch_stride;
     uint b_off = P.b_v.offset + batch * P.b_batch_stride;
@@ -499,30 +513,32 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
     uint col0 = bid.x * TN;
 
     float acc[TM][TN];
-    for (uint i=0;i<TM;++i) for (uint j=0;j<TN;++j) acc[i][j] = 0.0f;
+    for (uint i = 0; i < TM; ++i)
+        for (uint j = 0; j < TN; ++j)
+            acc[i][j] = 0.0f;
 
     threadgroup float Asub[TM][TK];
     threadgroup float Bsub[TK][TN];
 
     uint tiles = (P.K + TK - 1) / TK;
-    for (uint t=0; t<tiles; ++t) {
+    for (uint t = 0; t < tiles; ++t) {
         uint a_row = row0 + tid.y;
-        uint a_col = t*TK + tid.x;
+        uint a_col = t * TK + tid.x;
         if (a_row < P.M && a_col < P.K) {
-            uint a_idx = a_off + a_row*P.a_v.strides[0] + a_col*P.a_v.strides[1];
+            uint a_idx = a_off + a_row * P.a_v.strides[0] + a_col * P.a_v.strides[1];
             Asub[tid.y][tid.x] = A[a_idx];
         } else {
             Asub[tid.y][tid.x] = 0.0f;
         }
 
-        uint k_base = t*TK;
-        uint k_off  = tid.y;
-        uint j_off  = tid.x;
-        uint k_idx  = k_base + k_off;
-        uint j_idx  = col0 + j_off;
+        uint k_base = t * TK;
+        uint k_off = tid.y;
+        uint j_off = tid.x;
+        uint k_idx = k_base + k_off;
+        uint j_idx = col0 + j_off;
 
         if (k_idx < P.K && j_idx < P.N) {
-            uint b_idx = b_off + j_idx*P.b_v.strides[1] + k_idx*P.b_v.strides[0];
+            uint b_idx = b_off + j_idx * P.b_v.strides[1] + k_idx * P.b_v.strides[0];
             Bsub[k_off][j_off] = B[b_idx];
         } else {
             Bsub[k_off][j_off] = 0.0f;
@@ -530,9 +546,9 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
 
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        for (uint k=0;k<TK;++k) {
+        for (uint k = 0; k < TK; ++k) {
             float a = Asub[tid.y][k];
-            for (uint n=0;n<TN;++n) {
+            for (uint n = 0; n < TN; ++n) {
                 acc[tid.y][n] += a * Bsub[k][n];
             }
         }
@@ -541,10 +557,10 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
     }
 
     uint out_row = row0 + tid.y;
-    for (uint n=0;n<TN;++n) {
+    for (uint n = 0; n < TN; ++n) {
         uint out_col = col0 + n;
         if (out_row < P.M && out_col < P.N) {
-            uint c_idx = o_off + out_row*P.o_v.strides[0] + out_col*P.o_v.strides[1];
+            uint c_idx = o_off + out_row * P.o_v.strides[0] + out_col * P.o_v.strides[1];
             C[c_idx] = acc[tid.y][n];
         }
     }
@@ -556,90 +572,101 @@ kernel void matmul_tiled_tn_f32(device const float* A [[buffer(0)]],
 // slice of Dh. Causal by position: query row s attends keys [0, q_offset+s]. Query head h reads kv
 // head h/n_rep. acc[] holds ceil(Dh/32) elements per lane (Dh up to 32*FA_ACC_MAX).
 #define FA_ACC_MAX 16
-struct FlashParams { uint B, S, nH, Dh, KV, nKV, n_rep, causal, q_offset; float scale; };
+struct FlashParams {
+    uint B, S, nH, Dh, KV, nKV, n_rep, causal, q_offset;
+    float scale;
+};
 
 // Online-softmax flash attention. Q and the accumulator are always fp32; the K/V cache element type
 // KVT is templated so a bf16 KV cache halves cache read bandwidth (KVT upconverts to float on read,
 // the dot-product and accumulation stay fp32 -- no accuracy loss vs an fp32 cache).
 template <typename KVT>
-static inline void flash_attention_impl(device const float* Q, device const KVT* K,
-                                        device const KVT* V, device float* O,
-                                        constant FlashParams& P, uint3 tg, uint3 lt, uint3 ntg) {
+static inline void flash_attention_impl(device const float *Q, device const KVT *K, device const KVT *V,
+                                        device float *O, constant FlashParams &P, uint3 tg, uint3 lt, uint3 ntg) {
     uint h = tg.x, s = tg.y, b = tg.z;
-    if (h >= P.nH || s >= P.S || b >= P.B) return;
+    if (h >= P.nH || s >= P.S || b >= P.B)
+        return;
     uint lane = lt.x, T = ntg.x, Dh = P.Dh;
     uint kv = h / P.n_rep;
-    device const float* qp = Q + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
+    device const float *qp = Q + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
     uint jmax = P.causal ? min(P.KV, P.q_offset + s + 1) : P.KV;
 
     float m = -INFINITY, l = 0.0f;
     float acc[FA_ACC_MAX];
-    for (uint c = 0; c < FA_ACC_MAX; ++c) acc[c] = 0.0f;
+    for (uint c = 0; c < FA_ACC_MAX; ++c)
+        acc[c] = 0.0f;
 
     for (uint j = 0; j < jmax; ++j) {
-        device const KVT* kp = K + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        device const KVT *kp = K + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
         float part = 0.0f;
-        for (uint d = lane; d < Dh; d += T) part += qp[d] * float(kp[d]);
-        float sij = simd_sum(part) * P.scale;            // q·k reduced across the simdgroup
+        for (uint d = lane; d < Dh; d += T)
+            part += qp[d] * float(kp[d]);
+        float sij = simd_sum(part) * P.scale; // q·k reduced across the simdgroup
         float m_new = max(m, sij);
-        float corr = exp(m - m_new);                     // m=-inf first iter -> corr=0
-        float p    = exp(sij - m_new);
+        float corr = exp(m - m_new); // m=-inf first iter -> corr=0
+        float p = exp(sij - m_new);
         l = l * corr + p;
-        device const KVT* vp = V + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
+        device const KVT *vp = V + ((ulong)(b * P.KV + j) * P.nKV + kv) * Dh;
         uint c = 0;
-        for (uint d = lane; d < Dh; d += T) { acc[c] = acc[c] * corr + p * float(vp[d]); ++c; }
+        for (uint d = lane; d < Dh; d += T) {
+            acc[c] = acc[c] * corr + p * float(vp[d]);
+            ++c;
+        }
         m = m_new;
     }
     float inv = l > 0.0f ? 1.0f / l : 0.0f;
-    device float* op = O + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
+    device float *op = O + ((ulong)(b * P.S + s) * P.nH + h) * Dh;
     uint c = 0;
-    for (uint d = lane; d < Dh; d += T) { op[d] = acc[c] * inv; ++c; }
+    for (uint d = lane; d < Dh; d += T) {
+        op[d] = acc[c] * inv;
+        ++c;
+    }
 }
 
-kernel void flash_attention_f32(device const float* Q [[buffer(0)]],   // [B,S,nH,Dh]
-                                device const float* K [[buffer(1)]],   // [B,KV,nKV,Dh]
-                                device const float* V [[buffer(2)]],   // [B,KV,nKV,Dh]
-                                device float*       O [[buffer(3)]],   // [B,S,nH,Dh]
-                                constant FlashParams& P [[buffer(4)]],
-                                uint3 tg  [[threadgroup_position_in_grid]],   // (h, s, b)
-                                uint3 lt  [[thread_position_in_threadgroup]],
-                                uint3 ntg [[threads_per_threadgroup]]) {
+kernel void flash_attention_f32(device const float *Q [[buffer(0)]], // [B,S,nH,Dh]
+                                device const float *K [[buffer(1)]], // [B,KV,nKV,Dh]
+                                device const float *V [[buffer(2)]], // [B,KV,nKV,Dh]
+                                device float *O [[buffer(3)]],       // [B,S,nH,Dh]
+                                constant FlashParams &P [[buffer(4)]],
+                                uint3 tg [[threadgroup_position_in_grid]], // (h, s, b)
+                                uint3 lt [[thread_position_in_threadgroup]], uint3 ntg [[threads_per_threadgroup]]) {
     flash_attention_impl<float>(Q, K, V, O, P, tg, lt, ntg);
 }
 
 // fp32 Q x bf16 KV cache -> fp32 O.
-kernel void flash_attention_bf16kv(device const float*  Q [[buffer(0)]],
-                                   device const bfloat* K [[buffer(1)]],
-                                   device const bfloat* V [[buffer(2)]],
-                                   device float*        O [[buffer(3)]],
-                                   constant FlashParams& P [[buffer(4)]],
-                                   uint3 tg  [[threadgroup_position_in_grid]],
-                                   uint3 lt  [[thread_position_in_threadgroup]],
-                                   uint3 ntg [[threads_per_threadgroup]]) {
+kernel void flash_attention_bf16kv(device const float *Q [[buffer(0)]], device const bfloat *K [[buffer(1)]],
+                                   device const bfloat *V [[buffer(2)]], device float *O [[buffer(3)]],
+                                   constant FlashParams &P [[buffer(4)]], uint3 tg [[threadgroup_position_in_grid]],
+                                   uint3 lt [[thread_position_in_threadgroup]], uint3 ntg [[threads_per_threadgroup]]) {
     flash_attention_impl<bfloat>(Q, K, V, O, P, tg, lt, ntg);
 }
 
 // Broadcast
 
-kernel void broadcast_view_f32(device const float* in_buf [[buffer(0)]],
-                               device float* out_buf [[buffer(1)]],
-                               constant mslp::BroadcastParams& P [[buffer(2)]],
-                               uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.n) return;
+kernel void broadcast_view_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                               constant mslp::BroadcastParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.n)
+        return;
 
-    uint ocoords[8]; coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
     uint icoords[8];
 
     bool same = (P.in_v.rank == P.out_v.rank);
     if (same) {
-        for (ushort i=0;i<P.in_v.rank;++i) if (P.in_v.shape[i] != P.out_v.shape[i]) { same=false; break; }
+        for (ushort i = 0; i < P.in_v.rank; ++i)
+            if (P.in_v.shape[i] != P.out_v.shape[i]) {
+                same = false;
+                break;
+            }
     }
     if (same) {
-        for (ushort i=0;i<P.in_v.rank;++i) icoords[i] = ocoords[i];
+        for (ushort i = 0; i < P.in_v.rank; ++i)
+            icoords[i] = ocoords[i];
     } else {
         ushort r_in = P.in_v.rank, r_out = P.out_v.rank;
         ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
-        for (ushort i=0; i<r_in; ++i) {
+        for (ushort i = 0; i < r_in; ++i) {
             uint oc = ocoords[off + i];
             icoords[i] = (P.in_v.shape[i] == 1) ? 0 : oc;
         }
@@ -652,13 +679,12 @@ kernel void broadcast_view_f32(device const float* in_buf [[buffer(0)]],
 
 // Permute
 
-kernel void permute_view_f32(device const float* in_buf [[buffer(0)]],
-                             device float* out_buf [[buffer(1)]],
-                             constant mslp::PermuteParams& P [[buffer(2)]],
-                             uint gid [[thread_position_in_grid]]) {
-    uint ocoords[8]; coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+kernel void permute_view_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                             constant mslp::PermuteParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
     uint icoords[8];
-    for (ushort out_d=0; out_d<P.out_v.rank; ++out_d) {
+    for (ushort out_d = 0; out_d < P.out_v.rank; ++out_d) {
         ushort in_d = P.axes[out_d];
         icoords[in_d] = ocoords[out_d];
     }
@@ -669,14 +695,14 @@ kernel void permute_view_f32(device const float* in_buf [[buffer(0)]],
 
 // Slice forward/backward
 
-kernel void slice_forward_view_f32(device const float* in_buf [[buffer(0)]],
-                                   device float* out_buf [[buffer(1)]],
-                                   constant mslp::SliceParams& P [[buffer(2)]],
-                                   uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.n) return;
-    uint ocoords[8]; coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+kernel void slice_forward_view_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                                   constant mslp::SliceParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.n)
+        return;
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
     uint icoords[8];
-    for (ushort d=0; d<P.in_v.rank; ++d) {
+    for (ushort d = 0; d < P.in_v.rank; ++d) {
         uint st = (d < 8) ? P.step[d] : 1u;
         icoords[d] = P.begin[d] + ocoords[d] * st;
     }
@@ -685,14 +711,16 @@ kernel void slice_forward_view_f32(device const float* in_buf [[buffer(0)]],
     out_buf[oi] = in_buf[ai];
 }
 
-kernel void slice_backward_scatter_add_view_f32(device const float* grad_out [[buffer(0)]],
-                                                device float* grad_in [[buffer(1)]],
-                                                constant mslp::SliceParams& P [[buffer(2)]],
+kernel void slice_backward_scatter_add_view_f32(device const float *grad_out [[buffer(0)]],
+                                                device float *grad_in [[buffer(1)]],
+                                                constant mslp::SliceParams &P [[buffer(2)]],
                                                 uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.n) return;
-    uint ocoords[8]; coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+    if (gid >= P.n)
+        return;
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
     uint icoords[8];
-    for (ushort d=0; d<P.in_v.rank; ++d) {
+    for (ushort d = 0; d < P.in_v.rank; ++d) {
         uint st = (d < 8) ? P.step[d] : 1u;
         icoords[d] = P.begin[d] + ocoords[d] * st;
     }
@@ -708,28 +736,35 @@ kernel void slice_backward_scatter_add_view_f32(device const float* grad_out [[b
 // read and rounds-to-nearest-even on store, so the assignment does the conversion implicitly.
 
 template <typename SrcT, typename DstT>
-static inline void copy_view_impl(device DstT* dst, device const SrcT* src,
-                                  constant mslp::CopyViewParams& P, uint gid) {
-    if (gid >= P.n) return;
+static inline void copy_view_impl(device DstT *dst, device const SrcT *src, constant mslp::CopyViewParams &P,
+                                  uint gid) {
+    if (gid >= P.n)
+        return;
 
-    uint ocoords[8]; coords_from_linear(gid, P.dst_v.shape, P.dst_v.rank, ocoords);
+    uint ocoords[8];
+    coords_from_linear(gid, P.dst_v.shape, P.dst_v.rank, ocoords);
 
     bool same = (P.src_v.rank == P.dst_v.rank);
     if (same) {
-        for (ushort i=0; i<P.src_v.rank; ++i) if (P.src_v.shape[i] != P.dst_v.shape[i]) { same = false; break; }
+        for (ushort i = 0; i < P.src_v.rank; ++i)
+            if (P.src_v.shape[i] != P.dst_v.shape[i]) {
+                same = false;
+                break;
+            }
     }
     uint si, di;
     if (same) {
         // Fast path: direct coordinate use
         si = P.src_v.offset;
-        for (ushort i=0; i<P.src_v.rank; ++i) si += ocoords[i] * P.src_v.strides[i];
+        for (ushort i = 0; i < P.src_v.rank; ++i)
+            si += ocoords[i] * P.src_v.strides[i];
     } else {
         // General path: right-align + broadcast dims
         uint icoords[8];
-        ushort r_in  = P.src_v.rank;
+        ushort r_in = P.src_v.rank;
         ushort r_out = P.dst_v.rank;
-        ushort off   = (r_out > r_in) ? (r_out - r_in) : 0;
-        for (ushort i=0; i<r_in; ++i) {
+        ushort off = (r_out > r_in) ? (r_out - r_in) : 0;
+        for (ushort i = 0; i < r_in; ++i) {
             uint oc = ocoords[off + i];
             icoords[i] = (P.src_v.shape[i] == 1) ? 0 : oc;
         }
@@ -740,33 +775,27 @@ static inline void copy_view_impl(device DstT* dst, device const SrcT* src,
     dst[di] = DstT(src[si]);
 }
 
-kernel void copy_view_f32(device float* dst [[buffer(1)]],
-                          device const float* src [[buffer(0)]],
-                          constant mslp::CopyViewParams& P [[buffer(2)]],
-                          uint gid [[thread_position_in_grid]]) {
+kernel void copy_view_f32(device float *dst [[buffer(1)]], device const float *src [[buffer(0)]],
+                          constant mslp::CopyViewParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
     copy_view_impl<float, float>(dst, src, P, gid);
 }
 
 // bf16 -> bf16 (same-dtype strided copy: slice / reshape / materialize of a bf16 tensor).
-kernel void copy_view_bf16(device bfloat* dst [[buffer(1)]],
-                           device const bfloat* src [[buffer(0)]],
-                           constant mslp::CopyViewParams& P [[buffer(2)]],
-                           uint gid [[thread_position_in_grid]]) {
+kernel void copy_view_bf16(device bfloat *dst [[buffer(1)]], device const bfloat *src [[buffer(0)]],
+                           constant mslp::CopyViewParams &P [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
     copy_view_impl<bfloat, bfloat>(dst, src, P, gid);
 }
 
 // fp32 src -> bf16 dst (the converting write into a bf16 KV cache).
-kernel void copy_view_f32_to_bf16(device bfloat* dst [[buffer(1)]],
-                                  device const float* src [[buffer(0)]],
-                                  constant mslp::CopyViewParams& P [[buffer(2)]],
+kernel void copy_view_f32_to_bf16(device bfloat *dst [[buffer(1)]], device const float *src [[buffer(0)]],
+                                  constant mslp::CopyViewParams &P [[buffer(2)]],
                                   uint gid [[thread_position_in_grid]]) {
     copy_view_impl<float, bfloat>(dst, src, P, gid);
 }
 
 // bf16 src -> fp32 dst (e.g. reading a bf16 cache prefix back out as fp32).
-kernel void copy_view_bf16_to_f32(device float* dst [[buffer(1)]],
-                                  device const bfloat* src [[buffer(0)]],
-                                  constant mslp::CopyViewParams& P [[buffer(2)]],
+kernel void copy_view_bf16_to_f32(device float *dst [[buffer(1)]], device const bfloat *src [[buffer(0)]],
+                                  constant mslp::CopyViewParams &P [[buffer(2)]],
                                   uint gid [[thread_position_in_grid]]) {
     copy_view_impl<bfloat, float>(dst, src, P, gid);
 }
@@ -774,64 +803,63 @@ kernel void copy_view_bf16_to_f32(device float* dst [[buffer(1)]],
 // Fused RMSNorm over the last axis: out[r,d] = x[r,d] * rsqrt(mean_d(x^2)+eps) * w[d].
 // One threadgroup per row (dense row-major, width D); threads cooperatively sum x^2, then normalize.
 // One pass over x (+ w) instead of the composite's square->reduce->rsqrt->mul->mul.
-kernel void rms_norm_f32(device const float* x   [[buffer(0)]],
-                         device const float* w   [[buffer(1)]],
-                         device float*       out [[buffer(2)]],
-                         constant uint&  D   [[buffer(3)]],
-                         constant float& eps [[buffer(4)]],
-                         threadgroup float* smem [[threadgroup(0)]],
-                         uint tid  [[thread_position_in_threadgroup]],
-                         uint gidx [[threadgroup_position_in_grid]],
-                         uint tpg  [[threads_per_threadgroup]]) {
+kernel void rms_norm_f32(device const float *x [[buffer(0)]], device const float *w [[buffer(1)]],
+                         device float *out [[buffer(2)]], constant uint &D [[buffer(3)]],
+                         constant float &eps [[buffer(4)]], threadgroup float *smem [[threadgroup(0)]],
+                         uint tid [[thread_position_in_threadgroup]], uint gidx [[threadgroup_position_in_grid]],
+                         uint tpg [[threads_per_threadgroup]]) {
     const ulong row = (ulong)gidx * D;
     float acc = 0.0f;
-    for (uint i = tid; i < D; i += tpg) { float v = x[row + i]; acc += v * v; }
+    for (uint i = tid; i < D; i += tpg) {
+        float v = x[row + i];
+        acc += v * v;
+    }
     smem[tid] = acc;
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint stride = tpg >> 1; stride > 0; stride >>= 1) {
-        if (tid < stride) smem[tid] += smem[tid + stride];
+        if (tid < stride)
+            smem[tid] += smem[tid + stride];
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
     const float r = rsqrt(smem[0] / (float)D + eps);
-    for (uint i = tid; i < D; i += tpg) out[row + i] = x[row + i] * r * w[i];
+    for (uint i = tid; i < D; i += tpg)
+        out[row + i] = x[row + i] * r * w[i];
 }
 
 // Reduce (fast: last axis)
-kernel void reduce_last_axis_f32(device const float* in_buf [[buffer(0)]],
-                                 device float* out_buf [[buffer(1)]],
-                                 constant mslp::ReduceFastParams& P [[buffer(2)]],
-                                 threadgroup float* smem [[threadgroup(0)]],
-                                 uint tid  [[thread_position_in_threadgroup]],
-                                 uint gidx [[threadgroup_position_in_grid]],
-                                 uint tpg  [[threads_per_threadgroup]]) {
-    const ushort r_in  = P.in_v.rank;
+kernel void reduce_last_axis_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                                 constant mslp::ReduceFastParams &P [[buffer(2)]],
+                                 threadgroup float *smem [[threadgroup(0)]],
+                                 uint tid [[thread_position_in_threadgroup]],
+                                 uint gidx [[threadgroup_position_in_grid]], uint tpg [[threads_per_threadgroup]]) {
+    const ushort r_in = P.in_v.rank;
     const ushort r_out = P.out_v.rank;
 
     // Input-outer shape (drop the last axis)
-    uint in_outer_shape[8] = {1,1,1,1,1,1,1,1};
+    uint in_outer_shape[8] = {1, 1, 1, 1, 1, 1, 1, 1};
     for (ushort d = 0; d < r_in - 1; ++d)
         in_outer_shape[d] = P.in_v.shape[d];
 
     // Decode outer coords against the INPUT-outer shape
-    uint ocoords_in[8] = {0,0,0,0,0,0,0,0};
+    uint ocoords_in[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     coords_from_linear(gidx, in_outer_shape, (ushort)(r_in - 1), ocoords_in);
 
     // Build full input coords (insert last axis = 0)
-    uint icoords[8] = {0,0,0,0,0,0,0,0};
+    uint icoords[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     for (ushort d = 0; d < r_in - 1; ++d)
         icoords[d] = ocoords_in[d];
     icoords[r_in - 1] = 0;
 
     // Compute input/output bases via views
-    uint row_base_in  = index_from_coords(icoords, P.in_v);
+    uint row_base_in = index_from_coords(icoords, P.in_v);
 
-    uint ocoords_out[8] = {0,0,0,0,0,0,0,0};
+    uint ocoords_out[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     coords_from_linear(gidx, P.out_v.shape, r_out, ocoords_out);
     uint row_base_out = index_from_coords(ocoords_out, P.out_v);
 
     // Reduce along inner (last axis)
     uint inner = P.in_v.shape[r_in - 1];
-    uint s     = P.in_v.strides[r_in - 1];
+    uint s = P.in_v.strides[r_in - 1];
 
     float acc = (P.op == 0) ? 0.0f : -FLT_MAX;
     for (uint i = tid; i < inner; i += tpg) {
@@ -846,9 +874,7 @@ kernel void reduce_last_axis_f32(device const float* in_buf [[buffer(0)]],
     // Halving loop, power-of-two or not
     for (uint stride = tpg >> 1; stride > 0; stride >>= 1) {
         if (tid < stride) {
-            smem[tid] = (P.op == 0)
-                        ? (smem[tid] + smem[tid + stride])
-                        : fmax(smem[tid], smem[tid + stride]);
+            smem[tid] = (P.op == 0) ? (smem[tid] + smem[tid + stride]) : fmax(smem[tid], smem[tid + stride]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
@@ -861,12 +887,9 @@ kernel void reduce_last_axis_f32(device const float* in_buf [[buffer(0)]],
 
 // Reduce (general N-D)
 
-kernel void gather_f32(device const float* table [[buffer(0)]],
-                       device const int*  indices [[buffer(1)]],
-                       device float* out [[buffer(2)]],
-                       constant uint32_t& V [[buffer(3)]],
-                       constant uint32_t& D [[buffer(4)]],
-                       uint gid [[thread_position_in_grid]]) {
+kernel void gather_f32(device const float *table [[buffer(0)]], device const int *indices [[buffer(1)]],
+                       device float *out [[buffer(2)]], constant uint32_t &V [[buffer(3)]],
+                       constant uint32_t &D [[buffer(4)]], uint gid [[thread_position_in_grid]]) {
     int k = indices[gid];
     for (uint j = 0; j < D; ++j) {
         if (k >= 0 && (uint)k < V) {
@@ -879,20 +902,21 @@ kernel void gather_f32(device const float* table [[buffer(0)]],
 
 // Reduce (general N-D)
 
-kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
-                               device float* out_buf [[buffer(1)]],
-                               constant mslp::ReduceGeneralParams& P [[buffer(2)]],
+kernel void reduce_general_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                               constant mslp::ReduceGeneralParams &P [[buffer(2)]],
                                uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.out_total) return;
+    if (gid >= P.out_total)
+        return;
 
     // Decode output coords
-    uint ocoords[8]; coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
+    uint ocoords[8];
+    coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
 
     // Build base input coords for non-reduced axes
     uint icoords_base[8];
     uint out_pos = 0;
     const bool keep_dims = (P.out_v.rank == P.in_v.rank);
-    for (ushort d=0; d<P.in_v.rank; ++d) {
+    for (ushort d = 0; d < P.in_v.rank; ++d) {
         if (P.is_reduce_axis[d] != 0) {
             icoords_base[d] = 0;
         } else {
@@ -903,9 +927,14 @@ kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
 
     // Collect reduced dims
     ushort nred = 0;
-    uint red_dims[8]; uint red_sizes[8];
-    for (ushort d=0; d<P.in_v.rank; ++d) {
-        if (P.is_reduce_axis[d] != 0) { red_dims[nred]=d; red_sizes[nred]=P.in_v.shape[d]; ++nred; }
+    uint red_dims[8];
+    uint red_sizes[8];
+    for (ushort d = 0; d < P.in_v.rank; ++d) {
+        if (P.is_reduce_axis[d] != 0) {
+            red_dims[nred] = d;
+            red_sizes[nred] = P.in_v.shape[d];
+            ++nred;
+        }
     }
 
     float acc = (P.op == 0) ? 0.0f : -FLT_MAX;
@@ -913,22 +942,30 @@ kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
 
     while (true) {
         uint icoords[8];
-        for (ushort d=0; d<P.in_v.rank; ++d) icoords[d] = icoords_base[d];
-        for (ushort i=0; i<nred; ++i) icoords[red_dims[i]] = idxs[i];
+        for (ushort d = 0; d < P.in_v.rank; ++d)
+            icoords[d] = icoords_base[d];
+        for (ushort i = 0; i < nred; ++i)
+            icoords[red_dims[i]] = idxs[i];
 
         uint ii = index_from_coords(icoords, P.in_v);
         float v = in_buf[ii];
-        if (P.op == 0) acc += v; else acc = fmax(acc, v);
+        if (P.op == 0)
+            acc += v;
+        else
+            acc = fmax(acc, v);
 
-        if (nred == 0) break;
+        if (nred == 0)
+            break;
         ushort pos = nred;
         while (pos > 0) {
             --pos;
             idxs[pos]++;
-            if (idxs[pos] < red_sizes[pos]) break;
+            if (idxs[pos] < red_sizes[pos])
+                break;
             idxs[pos] = 0;
         }
-        if (pos == 0 && idxs[0] == 0) break;
+        if (pos == 0 && idxs[0] == 0)
+            break;
     }
 
     uint oi = index_from_coords(ocoords, P.out_v);
@@ -937,12 +974,11 @@ kernel void reduce_general_f32(device const float* in_buf [[buffer(0)]],
 
 // Concat
 
-kernel void concat_f32(device const float* in0 [[buffer(0)]],
-                       device const float* in1 [[buffer(1)]],
-                       device float*       out_buf [[buffer(2)]],
-                       constant mslp::ConcatParams& P [[buffer(3)]],
+kernel void concat_f32(device const float *in0 [[buffer(0)]], device const float *in1 [[buffer(1)]],
+                       device float *out_buf [[buffer(2)]], constant mslp::ConcatParams &P [[buffer(3)]],
                        uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.n) return;
+    if (gid >= P.n)
+        return;
 
     uint ocoords[8];
     coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
@@ -977,12 +1013,11 @@ kernel void concat_f32(device const float* in0 [[buffer(0)]],
 
 // Gather along axis
 
-kernel void gather_axis_f32(device const float* tensor_buf [[buffer(0)]],
-                            device const int* indices_buf [[buffer(1)]],
-                            device float* out_buf [[buffer(2)]],
-                            constant mslp::GatherAxisParams& P [[buffer(3)]],
+kernel void gather_axis_f32(device const float *tensor_buf [[buffer(0)]], device const int *indices_buf [[buffer(1)]],
+                            device float *out_buf [[buffer(2)]], constant mslp::GatherAxisParams &P [[buffer(3)]],
                             uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.n) return;
+    if (gid >= P.n)
+        return;
 
     uint ocoords[8];
     coords_from_linear(gid, P.out_v.shape, P.out_v.rank, ocoords);
@@ -994,7 +1029,8 @@ kernel void gather_axis_f32(device const float* tensor_buf [[buffer(0)]],
             // Find position along the gather axis in the output
             uint axis_pos = 0;
             uint stride_after = 1;
-            for (ushort d2 = P.out_v.rank; d2 > P.axis; --d2) stride_after *= P.out_v.shape[d2 - 1];
+            for (ushort d2 = P.out_v.rank; d2 > P.axis; --d2)
+                stride_after *= P.out_v.shape[d2 - 1];
             // Linear index within the output, then extract axis coordinate
             axis_pos = ocoords[P.axis];
             icoords[d] = static_cast<uint>(indices_buf[axis_pos]);
@@ -1010,13 +1046,11 @@ kernel void gather_axis_f32(device const float* tensor_buf [[buffer(0)]],
 
 // Scatter along axis
 
-kernel void scatter_axis_f32(device const float* base_buf [[buffer(0)]],
-                             device const float* values_buf [[buffer(1)]],
-                             device const int* indices_buf [[buffer(2)]],
-                             device float* out_buf [[buffer(3)]],
-                             constant mslp::ScatterAxisParams& P [[buffer(4)]],
-                             uint gid [[thread_position_in_grid]]) {
-    if (gid >= P.nval) return;
+kernel void scatter_axis_f32(device const float *base_buf [[buffer(0)]], device const float *values_buf [[buffer(1)]],
+                             device const int *indices_buf [[buffer(2)]], device float *out_buf [[buffer(3)]],
+                             constant mslp::ScatterAxisParams &P [[buffer(4)]], uint gid [[thread_position_in_grid]]) {
+    if (gid >= P.nval)
+        return;
 
     uint vcoords[8];
     coords_from_linear(gid, P.values_v.shape, P.values_v.rank, vcoords);
@@ -1024,7 +1058,8 @@ kernel void scatter_axis_f32(device const float* base_buf [[buffer(0)]],
     // The index along the scatter axis tells us which index to use
     uint idx_pos = vcoords[P.axis];
     int32_t scatter_idx = indices_buf[idx_pos];
-    if (scatter_idx < 0) return;
+    if (scatter_idx < 0)
+        return;
 
     // Map value coords to output coords
     uint ocoords[8];
@@ -1043,17 +1078,19 @@ kernel void scatter_axis_f32(device const float* base_buf [[buffer(0)]],
 
 // Scatter base copy (initializes output from base before scatter writes)
 
-kernel void scatter_base_copy_f32(device const float* base_buf [[buffer(0)]],
-                                   device float* out_buf [[buffer(1)]],
-                                   constant mslp::ScatterAxisParams& P [[buffer(2)]],
-                                   uint gid [[thread_position_in_grid]]) {
+kernel void scatter_base_copy_f32(device const float *base_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
+                                  constant mslp::ScatterAxisParams &P [[buffer(2)]],
+                                  uint gid [[thread_position_in_grid]]) {
     // Copy base view to output view
     uint n = 0;
-    for (ushort d = 0; d < P.base_v.rank; ++d) n *= P.base_v.shape[d];
+    for (ushort d = 0; d < P.base_v.rank; ++d)
+        n *= P.base_v.shape[d];
     // Actually compute numel
     n = 1;
-    for (ushort d = 0; d < P.base_v.rank; ++d) n *= P.base_v.shape[d];
-    if (gid >= n) return;
+    for (ushort d = 0; d < P.base_v.rank; ++d)
+        n *= P.base_v.shape[d];
+    if (gid >= n)
+        return;
 
     uint coords[8];
     coords_from_linear(gid, P.base_v.shape, P.base_v.rank, coords);
@@ -1063,17 +1100,14 @@ kernel void scatter_base_copy_f32(device const float* base_buf [[buffer(0)]],
 }
 
 // Gather rows from a bf16 table -> fp32 output (embedding lookup with bf16 weights).
-kernel void gather_bf16_f32(device const ushort* table [[buffer(0)]],
-                            device const int*    indices [[buffer(1)]],
-                            device float*        out [[buffer(2)]],
-                            constant uint32_t& V [[buffer(3)]],
-                            constant uint32_t& D [[buffer(4)]],
-                            uint gid [[thread_position_in_grid]]) {
+kernel void gather_bf16_f32(device const ushort *table [[buffer(0)]], device const int *indices [[buffer(1)]],
+                            device float *out [[buffer(2)]], constant uint32_t &V [[buffer(3)]],
+                            constant uint32_t &D [[buffer(4)]], uint gid [[thread_position_in_grid]]) {
     int k = indices[gid];
     for (uint j = 0; j < D; ++j) {
         if (k >= 0 && (uint)k < V) {
             ushort h = table[(uint)k * D + j];
-            out[gid * D + j] = as_type<float>((uint)h << 16);   // bf16 -> fp32
+            out[gid * D + j] = as_type<float>((uint)h << 16); // bf16 -> fp32
         } else {
             out[gid * D + j] = 0.0f;
         }

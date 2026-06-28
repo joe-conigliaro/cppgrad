@@ -1,22 +1,23 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include <vector>
-#include <iostream>
 #include <functional>
+#include <iostream>
+#include <vector>
+
+#include "cppgrad/backend/device_manager.h"
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/tensor_utils.h"
-#include "cppgrad/backend/device_manager.h"
 #include "cppgrad/utils/vector.h"
 #include "tests/helpers.h"
 
 using namespace cppgrad;
 
 int main() {
-    #if !defined(CPPGRAD_WITH_METAL)
-        std::cout << "[SKIPPED] CPU vs Metal ops - Metal backend not available" << std::endl;
-        return 0;
-    #endif
+#if !defined(CPPGRAD_WITH_METAL)
+    std::cout << "[SKIPPED] CPU vs Metal ops - Metal backend not available" << std::endl;
+    return 0;
+#endif
 
     try {
         backend::DeviceManager::instance().init();
@@ -43,22 +44,17 @@ int main() {
             auto a_gpu = ir::from_vector(ha, sa, backend::DeviceType::METAL);
             auto b_gpu = ir::from_vector(hb, sb, backend::DeviceType::METAL);
 
-            using BinaryOpFn = utils::Ref<ir::Tensor>(*)(const utils::Ref<const ir::Tensor>&, const utils::Ref<const ir::Tensor>&);
+            using BinaryOpFn =
+                utils::Ref<ir::Tensor> (*)(const utils::Ref<const ir::Tensor> &, const utils::Ref<const ir::Tensor> &);
             struct Op {
-                const char* name;
+                const char *name;
                 BinaryOpFn fn;
             };
 
-            Op ops[] = {
-                {"add", &ir::add},
-                {"mul", &ir::mul},
-                {"div", &ir::div},
-                {"pow", &ir::pow},
-                {"min", &ir::min},
-                {"max", &ir::max}
-            };
+            Op ops[] = {{"add", &ir::add}, {"mul", &ir::mul}, {"div", &ir::div},
+                        {"pow", &ir::pow}, {"min", &ir::min}, {"max", &ir::max}};
 
-            for (const auto& op : ops) {
+            for (const auto &op : ops) {
                 // Perform the operation on both CPU and GPU tensors
                 auto out_cpu_tensor = op.fn(a_cpu, b_cpu);
                 auto out_gpu_tensor = op.fn(a_gpu, b_gpu);
@@ -107,10 +103,10 @@ int main() {
             auto v_gpu_broadcast = gpu_broadcasted->to_vector<float>();
             EXPECT_TRUE(v_cpu_broadcast.size() == v_gpu_broadcast.size(), "broadcast: size mismatch");
             if (!v_cpu_broadcast.empty()) {
-                EXPECT_ALLCLOSE(v_gpu_broadcast.data(), v_cpu_broadcast.data(), v_cpu_broadcast.size(), tol, "broadcast");
+                EXPECT_ALLCLOSE(v_gpu_broadcast.data(), v_cpu_broadcast.data(), v_cpu_broadcast.size(), tol,
+                                "broadcast");
             }
         }
-
 
         // Diagnostic: read first few elements of the input that is to be broadcast
         {
@@ -118,8 +114,8 @@ int main() {
             std::vector<size_t> out_shape = {2, 3, 4};
             std::vector<float> hb(utils::vector::numel(in_shape));
             fill_random(hb, -1, 1, 777);
-            auto cpu_in  = ir::from_vector(hb, in_shape, backend::DeviceType::CPU);
-            auto gpu_in  = ir::from_vector(hb, in_shape, backend::DeviceType::METAL);
+            auto cpu_in = ir::from_vector(hb, in_shape, backend::DeviceType::CPU);
+            auto gpu_in = ir::from_vector(hb, in_shape, backend::DeviceType::METAL);
             auto cpu_in_v = cpu_in->to_vector<float>();
             auto gpu_in_v = gpu_in->to_vector<float>();
             for (int i = 0; i < std::min<int>(hb.size(), 8); ++i) {
@@ -135,7 +131,6 @@ int main() {
             EXPECT_CLOSE(v_cpu[idx], hb[0], 1e-6f, "CPU broadcast idx=8");
             EXPECT_CLOSE(v_gpu[idx], hb[0], 1e-6f, "GPU broadcast idx=8");
         }
-
 
         // Reductions
         {
@@ -173,8 +168,7 @@ int main() {
             std::cout << "\nCPU vs Metal tests had " << g_fail_count << " failures\n";
             return 1;
         }
-
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "\nEXCEPTION: " << e.what() << std::endl;
         return 2;
     }

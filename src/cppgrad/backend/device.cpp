@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
 #include "cppgrad/backend/device.h"
-#include "cppgrad/backend/backend.h"
+
 #include "cppgrad/backend/allocator.h"
+#include "cppgrad/backend/backend.h"
 
 namespace cppgrad::backend {
 

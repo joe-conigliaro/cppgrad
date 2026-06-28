@@ -2,20 +2,20 @@
 // https://github.com/joe-conigliaro
 #pragma once
 
-#include "cppgrad/optim/optim.h"
 #include "cppgrad/ir/grad_mode.h"
 #include "cppgrad/ir/tensor_operators.h"
+#include "cppgrad/optim/optim.h"
 
 namespace cppgrad::optim {
 
 class SGD : public Optimizer {
-public:
+  public:
     using Optimizer::Optimizer;
 
     void step() override {
         ir::NoGradScope _ngs;
 
-        for (auto& p : _params) {
+        for (auto &p : _params) {
             if (p->grad()) {
                 // Build the lazy graph for the update.
                 auto updated_p = p - (p->grad() * _lr);
@@ -26,11 +26,11 @@ public:
                 // p->set_requires_grad(true);
 
                 // Use AssignOp graph node.
-                p->assign(updated_p)->schedule(); p->set_requires_grad(true);
+                p->assign(updated_p)->schedule();
+                p->set_requires_grad(true);
             }
         }
     }
-
 };
 
 } // namespace cppgrad::optim

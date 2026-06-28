@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <vector>
+
 #include "cppgrad/ir/tensor.h"
 #include "cppgrad/utils/arena.h"
 
@@ -11,27 +12,25 @@ namespace cppgrad::ir {
 
 // Manages arena allocation and batched realization for a compute scope
 class GraphContext {
-public:
-    static GraphContext& instance(); // thread-local singleton
+  public:
+    static GraphContext &instance(); // thread-local singleton
     static bool active() noexcept { return s_scope_depth > 0; }
 
     size_t generation() const noexcept { return _generation; }
 
     // Allocate a node in the arena (raw pointer)
-    template<typename T, typename... Args>
-    T* alloc(Args&&... args) {
+    template <typename T, typename... Args> T *alloc(Args &&...args) {
         return _arena.alloc<T>(std::forward<Args>(args)...);
     }
 
     // Allocate a tensor node and return a `utils::Ref<ir::Tensor>`
-    template<typename... Args>
-    utils::Ref<ir::Tensor> make_node(Args&&... args) {
-        auto* p = _arena.alloc<ir::Tensor>(std::forward<Args>(args)...);
+    template <typename... Args> utils::Ref<ir::Tensor> make_node(Args &&...args) {
+        auto *p = _arena.alloc<ir::Tensor>(std::forward<Args>(args)...);
         return utils::Ref<ir::Tensor>(p);
     }
 
     // Schedule a node for realization; no-op if already realized or already scheduled in this generation.
-    void schedule_realization(const utils::Ref<const Tensor>& t);
+    void schedule_realization(const utils::Ref<const Tensor> &t);
 
     // Realize all scheduled nodes via the interpreter
     void realize_all();
@@ -40,12 +39,12 @@ public:
     void reset();
 
     // Debug
-    bool arena_owns(const void* p) const noexcept { return _arena.owns(p); }
+    bool arena_owns(const void *p) const noexcept { return _arena.owns(p); }
 
-private:
+  private:
     GraphContext() = default;
-    GraphContext(const GraphContext&) = delete;
-    GraphContext& operator=(const GraphContext&) = delete;
+    GraphContext(const GraphContext &) = delete;
+    GraphContext &operator=(const GraphContext &) = delete;
 
     utils::Arena _arena;
     std::vector<utils::Ref<const Tensor>> _to_realize;
@@ -58,12 +57,12 @@ private:
 
 // RAII-scoped graph lifetime
 class GraphScope {
-public:
+  public:
     GraphScope();
     ~GraphScope();
 
-    GraphScope(const GraphScope&) = delete;
-    GraphScope& operator=(const GraphScope&) = delete;
+    GraphScope(const GraphScope &) = delete;
+    GraphScope &operator=(const GraphScope &) = delete;
 
     static void flush();
 };

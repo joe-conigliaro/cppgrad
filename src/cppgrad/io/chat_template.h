@@ -23,25 +23,26 @@
 // encode it once. No hardcoded token IDs live here.
 //
 
+#include <nlohmann/json.hpp>
+#include <sstream>
 #include <string>
 #include <vector>
-#include <sstream>
-#include <nlohmann/json.hpp>
+
 #include "cppgrad/io/tokenizer.h"
 
 namespace cppgrad::io {
 
 // A single chat message (role + content + optional tool-call metadata).
 struct ChatMessage {
-    std::string role;          // "system" | "user" | "assistant" | "tool"
+    std::string role; // "system" | "user" | "assistant" | "tool"
     std::string content;
-    std::string tool_call_id;  // for role == "tool"
+    std::string tool_call_id; // for role == "tool"
     struct ToolCall {
         std::string id;
         std::string name;
-        nlohmann::json arguments;  // parsed object (not a JSON string)
+        nlohmann::json arguments; // parsed object (not a JSON string)
     };
-    std::vector<ToolCall> tool_calls;  // for role == "assistant"
+    std::vector<ToolCall> tool_calls; // for role == "assistant"
 };
 
 // A tool definition (OpenAI-compatible function schema).
@@ -50,45 +51,50 @@ struct ChatTool {
     struct Function {
         std::string name;
         std::string description;
-        nlohmann::json parameters;  // JSON Schema object
+        nlohmann::json parameters; // JSON Schema object
     } function;
 };
 
 // Qwen3 chat-template applier. Stateless; all token IDs are resolved through the
 // tokenizer at encode time, so the same instance works for Qwen3 / 3.5 / 3.6.
 class Qwen3ChatTemplate {
-public:
+  public:
     // Build the full prompt string for a conversation. `add_generation_prompt`
     // appends the trailing `<|im_start|>assistant\n` that primes generation.
-    std::string apply(const std::vector<ChatMessage>& messages,
-                      const std::vector<ChatTool>& tools = {},
+    std::string apply(const std::vector<ChatMessage> &messages, const std::vector<ChatTool> &tools = {},
                       bool add_generation_prompt = true) const {
         std::ostringstream oss;
 
         // Find an explicit system message (if any); Qwen3 adds no default system.
-        const ChatMessage* system_msg = nullptr;
-        for (const auto& m : messages) {
-            if (m.role == "system") { system_msg = &m; break; }
+        const ChatMessage *system_msg = nullptr;
+        for (const auto &m : messages) {
+            if (m.role == "system") {
+                system_msg = &m;
+                break;
+            }
         }
 
         // --- system turn (emitted when there is a system message or tools) ---
         if (system_msg || !tools.empty()) {
             oss << "<|im_start|>system\n";
-            if (system_msg) oss << system_msg->content;
+            if (system_msg)
+                oss << system_msg->content;
             if (!tools.empty()) {
-                if (system_msg && !system_msg->content.empty()) oss << "\n\n";
+                if (system_msg && !system_msg->content.empty())
+                    oss << "\n\n";
                 oss << "# Tools\n\n"
                        "You may call one or more functions to assist with the user query.\n\n"
                        "You are provided with function signatures within <tools></tools> XML tags:\n"
                        "<tools>";
-                for (const auto& t : tools) {
+                for (const auto &t : tools) {
                     nlohmann::json fn = {
                         {"type", t.type},
-                        {"function", {
-                            {"name", t.function.name},
-                            {"description", t.function.description},
-                            {"parameters", t.function.parameters},
-                        }},
+                        {"function",
+                         {
+                             {"name", t.function.name},
+                             {"description", t.function.description},
+                             {"parameters", t.function.parameters},
+                         }},
                     };
                     oss << "\n" << fn.dump();
                 }
@@ -103,8 +109,9 @@ public:
 
         // --- conversation turns ---
         for (size_t i = 0; i < messages.size(); ++i) {
-            const auto& msg = messages[i];
-            if (msg.role == "system") continue;  // already rendered above
+            const auto &msg = messages[i];
+            if (msg.role == "system")
+                continue; // already rendered above
 
             if (msg.role == "tool") {
                 // Group consecutive tool results into a single user turn, each
@@ -122,12 +129,14 @@ public:
 
             oss << "<|im_start|>" << msg.role << "\n";
             if (msg.role == "assistant" && !msg.tool_calls.empty()) {
-                if (!msg.content.empty()) oss << msg.content << "\n";
+                if (!msg.content.empty())
+                    oss << msg.content << "\n";
                 for (size_t k = 0; k < msg.tool_calls.size(); ++k) {
-                    const auto& tc = msg.tool_calls[k];
+                    const auto &tc = msg.tool_calls[k];
                     nlohmann::json call = {{"name", tc.name}, {"arguments", tc.arguments}};
                     oss << "<tool_call>\n" << call.dump() << "\n</tool_call>";
-                    if (k + 1 < msg.tool_calls.size()) oss << "\n";
+                    if (k + 1 < msg.tool_calls.size())
+                        oss << "\n";
                 }
             } else {
                 oss << msg.content;
@@ -135,17 +144,16 @@ public:
             oss << "<|im_end|>\n";
         }
 
-        if (add_generation_prompt) oss << "<|im_start|>assistant\n";
+        if (add_generation_prompt)
+            oss << "<|im_start|>assistant\n";
         return oss.str();
     }
 
     // Apply the template and return token IDs directly. The tokenizer splits the
     // registered special tokens (<|im_start|>, <tool_call>, ...) out to their own
     // IDs, so a single encode() of the rendered string yields the right sequence.
-    std::vector<int32_t> apply_tokens(const std::vector<ChatMessage>& messages,
-                                       const std::vector<ChatTool>& tools,
-                                       BPETokenizer& tokenizer,
-                                       bool add_generation_prompt = true) const {
+    std::vector<int32_t> apply_tokens(const std::vector<ChatMessage> &messages, const std::vector<ChatTool> &tools,
+                                      BPETokenizer &tokenizer, bool add_generation_prompt = true) const {
         return tokenizer.encode(apply(messages, tools, add_generation_prompt));
     }
 };

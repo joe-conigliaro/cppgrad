@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <utility>
+
 #include "cppgrad/backend/buffer.h"
 #include "cppgrad/common/access_meta.h"
 
@@ -12,7 +13,8 @@ namespace cppgrad::ir {
 // Combined storage-and-view descriptor shared across tensors.
 // Multiple tensors can share 'buffer' while each carries its own 'view'.
 struct StorageView {
-    static StorageView contiguous_from(std::shared_ptr<backend::Buffer> buf, std::vector<size_t> shape, size_t offset = 0) {
+    static StorageView contiguous_from(std::shared_ptr<backend::Buffer> buf, std::vector<size_t> shape,
+                                       size_t offset = 0) {
         StorageView sv;
         sv.buffer = std::move(buf);
         sv.access_meta = common::AccessMeta::contiguous_from(std::move(shape), offset);

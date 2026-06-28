@@ -1,13 +1,14 @@
 // Copyright (c) 2026 Joe Conigliaro
 // https://github.com/joe-conigliaro
-#include <vector>
 #include <iomanip>
 #include <iostream>
+#include <vector>
+
 #include "cppgrad/backend/device_manager.h"
 #include "cppgrad/ir/graph_context.h"
-#include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/ir/parameter.h"
 #include "cppgrad/ir/tensor.h"
+#include "cppgrad/ir/tensor_ops.h"
 #include "cppgrad/optim/sgd.h"
 
 using namespace cppgrad;
@@ -42,8 +43,8 @@ int main() {
 
         if (step == 0 || (step + 1) % 10 == 0) {
             // `item()` forces realization of 'loss'
-            std::cout << "step " << step+1
-                      << " loss=" << std::fixed << std::setprecision(6) << loss->item<float>() << "\n";
+            std::cout << "step " << step + 1 << " loss=" << std::fixed << std::setprecision(6) << loss->item<float>()
+                      << "\n";
         }
     }
 
