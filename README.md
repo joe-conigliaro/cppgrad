@@ -37,7 +37,7 @@ committed (and waited on) **once** at:
 
 ## LLM inference (Qwen3.5 / 3.6)
 Runs Qwen3.5/3.6 - including the 27B - from MLX `.safetensors` checkpoints via
-`examples/llm/qwen3_inference.cpp` (`--quant` keeps weights 8-bit). Includes a faithful
+`examples/nn/llm/qwen3_inference.cpp` (`--quant` keeps weights 8-bit). Includes a faithful
 GatedDeltaNet linear-attention + full-attention hybrid, an in-place (preallocated) KV /
 recurrent-state cache, a byte-level BPE tokenizer, and an MLX-affine quantized matmul
 (CPU + Metal, with a simdgroup GEMV for single-token decode).
@@ -48,7 +48,7 @@ for prefill/decode tokens-per-second.
 
 ### Example - Qwen3.6-27B-8bit
 ```sh
-./build/examples/llm/qwen3_inference \
+./build/examples/nn/llm/qwen3_inference \
     --model /path/to/models/mlx-community/Qwen3.6-27B-8bit \
     --config 27b \
     --prompt "An elephant is" \
@@ -189,7 +189,7 @@ FAST_MATH=false make examples
 ```
 
 Binaries are emitted under `build/`, mirroring source paths
-(e.g. `build/examples/llm/qwen3_inference`).
+(e.g. `build/examples/nn/llm/qwen3_inference`).
 
 ---
 
