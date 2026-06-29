@@ -198,6 +198,21 @@ void InterpreterExecutor::realize_scheduled(const std::vector<DeviceSchedule> &s
                         const size_t D = xs.back();
                         const size_t rows = (D > 0) ? (t->numel() / D) : 0;
                         out_device->backend()->rms_norm(*parents[0], *parents[1], *out_buf, rows, D, op.eps);
+                    } else if constexpr (std::is_same_v<T, cppgrad::ir::PairwiseDecayOp>) {
+                        out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                        const auto &gs = t->children()[0]->shape(); // [BH, L]
+                        out_device->backend()->pairwise_decay(*parents[0], *out_buf, gs[0], gs[1]);
+                    } else if constexpr (std::is_same_v<T, cppgrad::ir::DeltaDecayMaskOp>) {
+                        out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                        const auto &ss = t->children()[0]->shape(); // [BH, L, L]
+                        out_device->backend()->delta_decay_mask(*parents[0], *parents[1], *parents[2], *out_buf, ss[0],
+                                                                ss[1], op.strict, op.apply_beta);
+                    } else if constexpr (std::is_same_v<T, cppgrad::ir::FmaOp>) {
+                        out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
+                        const size_t n = t->numel();
+                        const size_t bn = t->children()[1]->numel();
+                        out_device->backend()->fma(*parents[0], *parents[1], *parents[2], *out_buf, n,
+                                                   bn > 0 ? n / bn : n);
                     } else if constexpr (std::is_same_v<T, cppgrad::ir::QuantizedMatMulOp>) {
                         out_buf = out_device->allocator()->allocate(t->numel(), t->dtype());
                         const size_t M = t->children()[0]->shape()[0];

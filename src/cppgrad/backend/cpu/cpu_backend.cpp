@@ -358,6 +358,44 @@ void CPUBackend::rms_norm(const Buffer &x, const Buffer &weight, Buffer &out, si
     }
 }
 
+void CPUBackend::pairwise_decay(const Buffer &G, Buffer &out, size_t BH, size_t L) const {
+    const float *g = static_cast<const float *>(G.data());
+    float *o = static_cast<float *>(out.data());
+    for (size_t h = 0; h < BH; ++h)
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < L; ++j) {
+                float diff = g[h * L + i] - g[h * L + j];
+                o[(h * L + i) * L + j] = std::exp(diff < 0.0f ? diff : 0.0f);
+            }
+}
+
+void CPUBackend::fma(const Buffer &a, const Buffer &b, const Buffer &c, Buffer &out, size_t n, size_t b_group) const {
+    const float *ap = static_cast<const float *>(a.data());
+    const float *bp = static_cast<const float *>(b.data());
+    const float *cp = static_cast<const float *>(c.data());
+    float *o = static_cast<float *>(out.data());
+    for (size_t i = 0; i < n; ++i)
+        o[i] = ap[i] * bp[i / b_group] + cp[i];
+}
+
+void CPUBackend::delta_decay_mask(const Buffer &scores, const Buffer &Dexp, const Buffer &beta, Buffer &out, size_t BH,
+                                  size_t L, bool strict, bool apply_beta) const {
+    const float *sc = static_cast<const float *>(scores.data());
+    const float *de = static_cast<const float *>(Dexp.data());
+    const float *bt = static_cast<const float *>(beta.data());
+    float *o = static_cast<float *>(out.data());
+    for (size_t h = 0; h < BH; ++h)
+        for (size_t i = 0; i < L; ++i)
+            for (size_t j = 0; j < L; ++j) {
+                size_t idx = (h * L + i) * L + j;
+                bool keep = strict ? (j < i) : (j <= i);
+                float v = keep ? sc[idx] * de[idx] : 0.0f;
+                if (keep && apply_beta)
+                    v *= bt[h * L + i];
+                o[idx] = v;
+            }
+}
+
 void CPUBackend::gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const {
     const int32_t *idx = static_cast<const int32_t *>(indices.data());
     const size_t N = indices.numel();

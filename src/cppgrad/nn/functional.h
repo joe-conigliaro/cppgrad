@@ -626,19 +626,18 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(const utils::Ref<ir::Tens
     // them ONCE and reuse, instead of rebuilding + re-uploading 3 tensors per sub-chunk (a long prefill
     // chunk has many sub-chunks x many layers -> thousands of redundant uploads/kernels). Only a
     // trailing partial sub-chunk (L<chunk) builds its own.
+    // M_incl (j<=i) is still needed for the G cumsum; M_id for the doubling-loop inverse. The strict
+    // mask is gone -- delta_decay_mask applies the triangular condition inline.
     auto build_masks = [&](size_t L) {
-        std::vector<float> mincl(L * L, 0.f), mstrict(L * L, 0.f), mid(L * L, 0.f);
+        std::vector<float> mincl(L * L, 0.f), mid(L * L, 0.f);
         for (size_t i = 0; i < L; ++i)
             for (size_t j = 0; j < L; ++j) {
                 if (j <= i)
                     mincl[i * L + j] = 1.f;
-                if (j < i)
-                    mstrict[i * L + j] = 1.f;
                 if (i == j)
                     mid[i * L + j] = 1.f;
             }
-        return std::array<utils::Ref<ir::Tensor>, 3>{ir::from_vector<float>(mincl, {1, L, L}, dev),
-                                                     ir::from_vector<float>(mstrict, {1, L, L}, dev),
+        return std::array<utils::Ref<ir::Tensor>, 2>{ir::from_vector<float>(mincl, {1, L, L}, dev),
                                                      ir::from_vector<float>(mid, {1, L, L}, dev)};
     };
     const size_t Lfull = std::min(chunk, S);
@@ -656,8 +655,7 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(const utils::Ref<ir::Tens
 
         const auto masks = (L == Lfull) ? masks_full : build_masks(L);
         auto M_incl = masks[0];
-        auto M_strict = masks[1];
-        auto M_id = masks[2];
+        auto M_id = masks[1];
 
         // Inclusive cumulative log-decay G_i = sum_{j<=i} g_j (<=0), via mask-multiply (no matmul).
         auto g_row = ir::reshape(gc, {BH, 1, L});            // [BH,1,L]
@@ -666,12 +664,15 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(const utils::Ref<ir::Tens
 
         // Pairwise decay ratio D[i,j] = d_i/d_j = exp(G_i - G_j), clamped to <=0 before exp so the
         // masked-out (i<j, would be >0) entries can't overflow:  exp(min(G_i-G_j, 0)).
-        auto E = ir::sub(G, ir::reshape(G, {BH, 1, L}));    // [BH,L,L] E[i,j]=G_i-G_j
-        auto Dexp = ir::exp(ir::neg(ir::relu(ir::neg(E)))); // exp(min(E,0)) in (0,1]
+        // Dexp[i,j] = exp(min(G_i - G_j, 0)) in (0,1], fused (was sub-bcast -> neg -> relu -> neg -> exp,
+        // 4 [BH,L,L] intermediates) into one kernel.
+        auto Dexp = ir::pairwise_decay(ir::reshape(G, {BH, L}));
 
         auto kt = ir::transpose(kc, 1, 2); // [BH,dk,L]
-        // A[i,j] = beta_i (d_i/d_j)(k_i.k_j), strictly lower (j<i)
-        auto A = ir::mul(ir::mul(ir::mul(ir::matmul(kc, kt), Dexp), M_strict), bc);
+        // A[i,j] = beta_i (d_i/d_j)(k_i.k_j), strictly lower (j<i). Fused: (kc@kt)*Dexp*tril_strict*beta.
+        // beta must be contiguous [BH,L] for the fused kernel's flat indexing (bc is a strided slice).
+        auto bc_c = ir::reshape(bc, {BH, L});
+        auto A = ir::delta_decay_mask(ir::matmul(kc, kt), Dexp, bc_c, /*strict=*/true, /*apply_beta=*/true);
 
         // Inv = (I + A)^{-1} = sum_{p>=0}(-A)^p (finite; A^L=0). Doubling: R_{2m}=(I+P^m)R_m.
         auto P = ir::neg(A);
@@ -687,16 +688,17 @@ inline utils::Ref<ir::Tensor> gated_delta_scan_chunked(const utils::Ref<ir::Tens
         auto RHS = ir::mul(ir::sub(vc, ir::mul(d_inc, KS)), bc); // beta (V - d (.) K S_in)
         auto U = ir::matmul(Inv, RHS);                           // [BH,L,dv]
 
-        auto QS = ir::matmul(qc, state);                                 // Q S_in   [BH,L,dv]
-        auto QKt_l = ir::mul(ir::mul(ir::matmul(qc, kt), Dexp), M_incl); // (d_i/d_j) tril_incl(Q K^T)
-        auto intra = ir::matmul(QKt_l, U);                               // [BH,L,dv]
-        o_chunks.push_back(ir::add(ir::mul(QS, d_inc), intra));          // d_i (Q S_in) + intra
+        auto QS = ir::matmul(qc, state); // Q S_in   [BH,L,dv]
+        // (d_i/d_j) tril_incl(Q K^T), fused: (qc@kt)*Dexp*tril_incl (no beta).
+        auto QKt_l = ir::delta_decay_mask(ir::matmul(qc, kt), Dexp, bc_c, /*strict=*/false, /*apply_beta=*/false);
+        auto intra = ir::matmul(QKt_l, U);             // [BH,L,dv]
+        o_chunks.push_back(ir::fma(QS, d_inc, intra)); // d_i (Q S_in) + intra (fused mul+add)
 
         // S_out = d_{L-1} S_in + sum_j (d_{L-1}/d_j) k_j U_j^T = d_last S_in + K^T (c (.) U)
         auto d_last = ir::reshape(ir::slice(d_inc, {0, L - 1, 0}, {BH, L, 1}), {BH, 1, 1});
         auto cvec = ir::exp(ir::neg(ir::relu(ir::neg(ir::sub(ir::slice(G, {0, L - 1, 0}, {BH, L, 1}), G)))));
         auto KtU = ir::matmul(kt, ir::mul(U, cvec)); // [BH,dk,dv]
-        state = ir::add(ir::mul(state, d_last), KtU);
+        state = ir::fma(state, d_last, KtU);         // d_last * state + KtU (fused mul+add)
     }
     state_out = state;
 

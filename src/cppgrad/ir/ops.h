@@ -77,6 +77,26 @@ struct RMSNormOp {
     float eps;
 };
 
+// Fused pairwise decay matrix for the GatedDeltaNet scan (inference only, no backward):
+// out[h,i,j] = exp(min(G[h,i] - G[h,j], 0)), G [BH,L] -> out [BH,L,L]. Replaces the
+// sub-broadcast -> neg -> relu -> neg -> exp chain (4 intermediate [BH,L,L] tensors) with one pass.
+struct PairwiseDecayOp {};
+
+// Fused decay-masked score matrix for the GatedDeltaNet scan (inference only, no backward):
+// out[h,i,j] = cond(i,j) ? scores[h,i,j] * Dexp[h,i,j] * (apply_beta ? beta[h,i] : 1) : 0,
+// cond = strict ? (j<i) : (j<=i). Replaces the post-matmul (scores * Dexp * tri_mask [* beta]) chain
+// AND the explicit triangular mask tensors (condition computed inline). children = {scores, Dexp, beta}.
+struct DeltaDecayMaskOp {
+    bool strict;
+    bool apply_beta;
+};
+
+// Fused multiply-add with a leading-broadcast scalar (inference only, no backward):
+// out = a * b + c, where a, c, out share one shape and b broadcasts over the trailing
+// (a.numel / b.numel) elements -- i.e. b is a per-leading-group scalar (e.g. a per-head or
+// per-(head,row) decay). children = {a, b, c}. Replaces mul(a, b) + add(.., c).
+struct FmaOp {};
+
 // Quantization scheme descriptor (an op parameter, like RandomParams). The
 // backend dispatches on `scheme` internally, so a new scheme (GPTQ, AWQ,
 // k-quants, ...) is a kernel branch -- not a virtual per type. Each scheme also
@@ -173,8 +193,8 @@ struct MovementOp {
 
 // The main Op variant,
 using Op = std::variant<ConstantOp, LeafOp, CopyOp, AssignOp, CacheUpdateOp, MatMulOp, FlashAttentionOp, RMSNormOp,
-                        QuantizedMatMulOp, RandomOp, UnaryOp, BinaryOp, ReduceOp, MovementOp, GatherOp, GatherAxisOp,
-                        ScatterOp, ConcatOp>;
+                        PairwiseDecayOp, DeltaDecayMaskOp, FmaOp, QuantizedMatMulOp, RandomOp, UnaryOp, BinaryOp,
+                        ReduceOp, MovementOp, GatherOp, GatherAxisOp, ScatterOp, ConcatOp>;
 
 inline const char *to_string(const ConstantOp &op) { return "ConstantOp"; }
 inline const char *to_string(const LeafOp &op) { return "LeafOp"; }
@@ -189,6 +209,9 @@ inline const char *to_string(const MatMulOp &op) { return "MatMulOp"; }
 inline const char *to_string(const QuantizedMatMulOp &op) { return "QuantizedMatMulOp"; }
 inline const char *to_string(const FlashAttentionOp &op) { return "FlashAttentionOp"; }
 inline const char *to_string(const RMSNormOp &op) { return "RMSNormOp"; }
+inline const char *to_string(const PairwiseDecayOp &op) { return "PairwiseDecayOp"; }
+inline const char *to_string(const DeltaDecayMaskOp &op) { return "DeltaDecayMaskOp"; }
+inline const char *to_string(const FmaOp &op) { return "FmaOp"; }
 
 inline const char *to_string(const RandomOp &op) {
     switch (op.type) {
@@ -292,7 +315,8 @@ inline constexpr bool is_differentiable_v =
     !std::is_same_v<std::decay_t<T>, CacheUpdateOp> && !std::is_same_v<std::decay_t<T>, GatherOp> &&
     !std::is_same_v<std::decay_t<T>, GatherAxisOp> && !std::is_same_v<std::decay_t<T>, QuantizedMatMulOp> &&
     !std::is_same_v<std::decay_t<T>, FlashAttentionOp> && !std::is_same_v<std::decay_t<T>, RMSNormOp> &&
-    !std::is_same_v<std::decay_t<T>, ScatterOp>;
+    !std::is_same_v<std::decay_t<T>, PairwiseDecayOp> && !std::is_same_v<std::decay_t<T>, DeltaDecayMaskOp> &&
+    !std::is_same_v<std::decay_t<T>, FmaOp> && !std::is_same_v<std::decay_t<T>, ScatterOp>;
 // ConcatOp is differentiable (backward: split grad along axis).
 // Runtime.
 inline bool is_differentiable(const Op &op_v) {

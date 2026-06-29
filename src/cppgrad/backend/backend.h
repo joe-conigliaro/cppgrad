@@ -86,6 +86,26 @@ class Backend {
         throw std::runtime_error("rms_norm: not implemented for this backend");
     }
 
+    // Fused pairwise decay matrix: out[h,i,j] = exp(min(G[h,i]-G[h,j], 0)), G [BH,L] -> out [BH,L,L].
+    virtual void pairwise_decay(const Buffer & /*G*/, Buffer & /*out*/, size_t /*BH*/, size_t /*L*/) const {
+        throw std::runtime_error("pairwise_decay: not implemented for this backend");
+    }
+
+    // Fused decay-masked scores: out[h,i,j] = cond ? scores*Dexp*(apply_beta?beta[h,i]:1) : 0,
+    // cond = strict ? (j<i) : (j<=i). scores,Dexp [BH,L,L], beta [BH,L,1] -> out [BH,L,L].
+    virtual void delta_decay_mask(const Buffer & /*scores*/, const Buffer & /*Dexp*/, const Buffer & /*beta*/,
+                                  Buffer & /*out*/, size_t /*BH*/, size_t /*L*/, bool /*strict*/,
+                                  bool /*apply_beta*/) const {
+        throw std::runtime_error("delta_decay_mask: not implemented for this backend");
+    }
+
+    // Fused multiply-add: out[i] = a[i] * b[i / b_group] + c[i], for n elements (a, c, out length n;
+    // b a per-leading-group scalar of length n/b_group).
+    virtual void fma(const Buffer & /*a*/, const Buffer & /*b*/, const Buffer & /*c*/, Buffer & /*out*/, size_t /*n*/,
+                     size_t /*b_group*/) const {
+        throw std::runtime_error("fma: not implemented for this backend");
+    }
+
     // Quantized matmul: out[M,N] = a[M,K] @ dequant(qweight)^T (dequant in kernel). Dispatches on
     // params.scheme internally (one entry point for all schemes, not a virtual per quant type).
     // `aux` holds the scheme's metadata buffers in a scheme-defined order (see ir::QuantScheme):

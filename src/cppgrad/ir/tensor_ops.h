@@ -58,6 +58,11 @@ utils::Ref<Tensor> flash_attention(const utils::Ref<const Tensor> &q, const util
                                    const utils::Ref<const Tensor> &v, float scale, int n_rep, bool causal,
                                    size_t q_offset);
 utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor> &x, const utils::Ref<const Tensor> &weight, float eps);
+utils::Ref<Tensor> pairwise_decay(const utils::Ref<const Tensor> &G);
+utils::Ref<Tensor> delta_decay_mask(const utils::Ref<const Tensor> &scores, const utils::Ref<const Tensor> &Dexp,
+                                    const utils::Ref<const Tensor> &beta, bool strict, bool apply_beta);
+utils::Ref<Tensor> fma(const utils::Ref<const Tensor> &a, const utils::Ref<const Tensor> &b,
+                       const utils::Ref<const Tensor> &c);
 
 // Quantized matmul (inference): out[M,N] = a[M,K] @ dequant(qweight)^T, weights kept packed and
 // dequantized in-kernel. `params` selects the scheme (MLX affine 8-bit by default). For MLX affine:

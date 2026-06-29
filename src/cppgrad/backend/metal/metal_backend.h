@@ -38,6 +38,10 @@ class MetalBackend final : public Backend {
                          size_t Dh, size_t KV, size_t nKV, float scale, int n_rep, bool causal,
                          size_t q_offset) const override;
     void rms_norm(const Buffer &x, const Buffer &weight, Buffer &out, size_t rows, size_t D, float eps) const override;
+    void pairwise_decay(const Buffer &G, Buffer &out, size_t BH, size_t L) const override;
+    void delta_decay_mask(const Buffer &scores, const Buffer &Dexp, const Buffer &beta, Buffer &out, size_t BH,
+                          size_t L, bool strict, bool apply_beta) const override;
+    void fma(const Buffer &a, const Buffer &b, const Buffer &c, Buffer &out, size_t n, size_t b_group) const override;
     void gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const override;
     void concat_op(const std::vector<const Buffer *> &inputs, const std::vector<backend::View> &input_views,
                    Buffer &out, const backend::View &out_view, int axis) const override;

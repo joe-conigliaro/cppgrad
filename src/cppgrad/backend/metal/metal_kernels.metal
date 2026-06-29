@@ -826,6 +826,47 @@ kernel void rms_norm_f32(device const float *x [[buffer(0)]], device const float
         out[row + i] = x[row + i] * r * w[i];
 }
 
+// Fused pairwise decay matrix for the GatedDeltaNet scan: out[h,i,j] = exp(min(G[h,i]-G[h,j], 0)).
+// G [BH,L] -> out [BH,L,L]. One thread per output element -- collapses the sub->neg->relu->neg->exp
+// chain and its 4 [BH,L,L] global intermediates into one pass.
+kernel void pairwise_decay_f32(device const float *G [[buffer(0)]], device float *out [[buffer(1)]],
+                               constant uint &L [[buffer(2)]], uint gid [[thread_position_in_grid]]) {
+    const uint LL = L * L;
+    const uint h = gid / LL;
+    const uint r = gid - h * LL;
+    const uint i = r / L, j = r % L;
+    const float diff = G[h * L + i] - G[h * L + j];
+    out[gid] = exp(diff < 0.0f ? diff : 0.0f);
+}
+
+// Fused decay-masked scores: out[h,i,j] = cond ? scores*Dexp*(apply_beta?beta[h,i]:1) : 0,
+// cond = strict ? (j<i) : (j<=i). Collapses (matmul-scores * Dexp * tri_mask [* beta]) + removes the
+// explicit triangular mask tensors (condition computed inline from i,j).
+kernel void delta_decay_mask_f32(device const float *scores [[buffer(0)]], device const float *Dexp [[buffer(1)]],
+                                 device const float *beta [[buffer(2)]], device float *out [[buffer(3)]],
+                                 constant uint &L [[buffer(4)]], constant uint &strict [[buffer(5)]],
+                                 constant uint &apply_beta [[buffer(6)]], uint gid [[thread_position_in_grid]]) {
+    const uint LL = L * L;
+    const uint h = gid / LL;
+    const uint r = gid - h * LL;
+    const uint i = r / L, j = r % L;
+    const bool keep = strict ? (j < i) : (j <= i);
+    float v = keep ? scores[gid] * Dexp[gid] : 0.0f;
+    if (keep && apply_beta)
+        v *= beta[h * L + i];
+    out[gid] = v;
+}
+
+// Fused multiply-add: out[i] = a[i] * b[i / b_group] + c[i]. b broadcasts over trailing groups.
+kernel void fma_f32(device const float *a [[buffer(0)]], device const float *b [[buffer(1)]],
+                    device const float *c [[buffer(2)]], device float *out [[buffer(3)]],
+                    constant uint &n [[buffer(4)]], constant uint &b_group [[buffer(5)]],
+                    uint gid [[thread_position_in_grid]]) {
+    if (gid >= n)
+        return;
+    out[gid] = a[gid] * b[gid / b_group] + c[gid];
+}
+
 // Reduce (fast: last axis)
 kernel void reduce_last_axis_f32(device const float *in_buf [[buffer(0)]], device float *out_buf [[buffer(1)]],
                                  constant mslp::ReduceFastParams &P [[buffer(2)]],

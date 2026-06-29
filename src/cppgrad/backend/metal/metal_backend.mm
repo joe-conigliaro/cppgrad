@@ -495,6 +495,53 @@ struct MetalBackend::Impl {
         encode_submit(work);
     }
 
+    void submit_pairwise_decay(const Buffer &G, Buffer &out, size_t BH, size_t L) const {
+        if (out.size_bytes() == 0)
+            return;
+        ComputeWork work;
+        work.pso = cache->get("pairwise_decay_f32");
+        work.buffers.push_back({as_mtl(G), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        uint32_t l_u32 = (uint32_t)L;
+        work.add_bytes(2, &l_u32, sizeof(uint32_t));
+        set_linear(work, BH * L * L); // one thread per output element
+        encode_submit(work);
+    }
+
+    void submit_delta_decay_mask(const Buffer &scores, const Buffer &Dexp, const Buffer &beta, Buffer &out, size_t BH,
+                                 size_t L, bool strict, bool apply_beta) const {
+        if (out.size_bytes() == 0)
+            return;
+        ComputeWork work;
+        work.pso = cache->get("delta_decay_mask_f32");
+        work.buffers.push_back({as_mtl(scores), 0});
+        work.buffers.push_back({as_mtl(Dexp), 0});
+        work.buffers.push_back({as_mtl(beta), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        uint32_t l_u32 = (uint32_t)L, st = strict ? 1u : 0u, ab = apply_beta ? 1u : 0u;
+        work.add_bytes(4, &l_u32, sizeof(uint32_t));
+        work.add_bytes(5, &st, sizeof(uint32_t));
+        work.add_bytes(6, &ab, sizeof(uint32_t));
+        set_linear(work, BH * L * L);
+        encode_submit(work);
+    }
+
+    void submit_fma(const Buffer &a, const Buffer &b, const Buffer &c, Buffer &out, size_t n, size_t b_group) const {
+        if (out.size_bytes() == 0)
+            return;
+        ComputeWork work;
+        work.pso = cache->get("fma_f32");
+        work.buffers.push_back({as_mtl(a), 0});
+        work.buffers.push_back({as_mtl(b), 0});
+        work.buffers.push_back({as_mtl(c), 0});
+        work.buffers.push_back({as_mtl(out), 0});
+        uint32_t n_u32 = (uint32_t)n, g_u32 = (uint32_t)b_group;
+        work.add_bytes(4, &n_u32, sizeof(uint32_t));
+        work.add_bytes(5, &g_u32, sizeof(uint32_t));
+        set_linear(work, n);
+        encode_submit(work);
+    }
+
     void submit_gather_op(const Buffer &table, const Buffer &indices, Buffer &out, size_t V, size_t D) const {
         if (out.size_bytes() == 0)
             return;
@@ -706,6 +753,19 @@ void MetalBackend::flash_attention(const Buffer &q, const Buffer &k, const Buffe
 
 void MetalBackend::rms_norm(const Buffer &x, const Buffer &w, Buffer &out, size_t rows, size_t D, float eps) const {
     _impl->submit_rms_norm(x, w, out, rows, D, eps);
+}
+
+void MetalBackend::pairwise_decay(const Buffer &G, Buffer &out, size_t BH, size_t L) const {
+    _impl->submit_pairwise_decay(G, out, BH, L);
+}
+
+void MetalBackend::delta_decay_mask(const Buffer &scores, const Buffer &Dexp, const Buffer &beta, Buffer &out,
+                                    size_t BH, size_t L, bool strict, bool apply_beta) const {
+    _impl->submit_delta_decay_mask(scores, Dexp, beta, out, BH, L, strict, apply_beta);
+}
+
+void MetalBackend::fma(const Buffer &a, const Buffer &b, const Buffer &c, Buffer &out, size_t n, size_t b_group) const {
+    _impl->submit_fma(a, b, c, out, n, b_group);
 }
 
 void MetalBackend::quantized_matmul(const Buffer &a, const Buffer &qweight, const std::vector<const Buffer *> &aux,

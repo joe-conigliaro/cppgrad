@@ -251,6 +251,28 @@ utils::Ref<Tensor> rms_norm(const utils::Ref<const Tensor> &x, const utils::Ref<
     return Tensor::make(RMSNormOp{eps}, {x, weight}, x->shape(), x->device_type(), x->dtype());
 }
 
+// Fused pairwise decay matrix: G [BH,L] -> [BH,L,L], out[h,i,j] = exp(min(G[h,i]-G[h,j], 0)).
+utils::Ref<Tensor> pairwise_decay(const utils::Ref<const Tensor> &G) {
+    const auto &s = G->shape(); // [BH, L]
+    std::vector<size_t> out_shape = {s[0], s[1], s[1]};
+    return Tensor::make(PairwiseDecayOp{}, {G}, out_shape, G->device_type(), G->dtype());
+}
+
+// Fused decay-masked scores: out[h,i,j] = cond(i,j) ? scores*Dexp*(apply_beta?beta[h,i]:1) : 0.
+// scores, Dexp [BH,L,L]; beta [BH,L,1]. strict -> j<i, else j<=i.
+utils::Ref<Tensor> delta_decay_mask(const utils::Ref<const Tensor> &scores, const utils::Ref<const Tensor> &Dexp,
+                                    const utils::Ref<const Tensor> &beta, bool strict, bool apply_beta) {
+    return Tensor::make(DeltaDecayMaskOp{strict, apply_beta}, {scores, Dexp, beta}, scores->shape(),
+                        scores->device_type(), scores->dtype());
+}
+
+// Fused multiply-add: out = a*b + c. a, c, out share a's shape; b is a per-leading-group scalar that
+// broadcasts over the trailing a.numel/b.numel elements (b.numel must divide a.numel).
+utils::Ref<Tensor> fma(const utils::Ref<const Tensor> &a, const utils::Ref<const Tensor> &b,
+                       const utils::Ref<const Tensor> &c) {
+    return Tensor::make(FmaOp{}, {a, b, c}, a->shape(), a->device_type(), a->dtype());
+}
+
 utils::Ref<Tensor> quantized_matmul(const utils::Ref<const Tensor> &a, const utils::Ref<const Tensor> &qweight,
                                     const std::vector<utils::Ref<const Tensor>> &aux, const ir::QuantParams &params,
                                     common::DType out_dtype) {
