@@ -27,16 +27,20 @@ inline float quant_gemv_word(uint w, device const uint32_t *wrow, device const f
 
 // Register-blocked, threadgroup-memory-tiled quantized GEMM (prefill, M > 1).
 // OUT[M,N] = A[M,K] @ dequant(W)^T,  W[N,K] = S*q + B  (MLX affine u8).
-// Each threadgroup computes a QT_BM x QT_BN output tile with (QT_BM/QT_RM)x(QT_BN/QT_RN)=16x16=256
-// threads, each accumulating a QT_RM x QT_RN register micro-tile over the K dimension in QT_BK steps.
+// Each threadgroup computes a QT_BM x QT_BN (64x128) output tile with (QT_BM/QT_RM)x(QT_BN/QT_RN)=16x16
+// =256 threads, each accumulating a QT_RM x QT_RN (4x8) register micro-tile over K in QT_BK (32) steps.
 // The weight tile is DEQUANTIZED ONCE into threadgroup memory per K-step and reused across all QT_BM
 // rows of the tile -> full batch reuse + high occupancy. (Replaced an earlier naive one-thread-per-
-// output kernel and a simdgroup-per-row-block kernel, both ~bandwidth/occupancy bound.)
+// output kernel and a simdgroup-per-row-block kernel, both ~bandwidth/occupancy bound.) The tile shape
+// was swept at 27B prefill shapes: the wide N micro-tile (RN=8) raises arithmetic intensity (each A
+// value feeds 8 output cols); BN=128 keeps 256 threads so occupancy holds (RN=8 at BN=64 drops to 128
+// threads and loses the gain); BK=32 halves barriers (BK=64 would overflow the 32KB threadgroup limit).
+// ~+9% vs the prior 64x64/4x4/BK16 tile (gate/up +6%, down +12%, attn +9%), all clean uncontended benches.
 #define QT_BM 64
-#define QT_BN 64
-#define QT_BK 16
+#define QT_BN 128
+#define QT_BK 32
 #define QT_RM 4
-#define QT_RN 4
+#define QT_RN 8
 
 // Templated on the activation type AT (fp32 or bf16) and output type OUTT (fp32 or bf16): activations
 // upconvert to float on load, accumulation is always fp32, the result downconverts to OUTT on store.

@@ -409,11 +409,15 @@ struct MetalBackend::Impl {
         }
 
         // Prefill / general path (M > 1): register-blocked, threadgroup-memory-tiled GEMM
-        // (matmul_quant_gemm_tiled_f32) -- 64x64 tile, 256 threads x 4x4 micro-tile, weight tile
-        // dequantized ONCE into shared memory and reused across all 64 rows. (A simdgroup_matrix variant
-        // was tried and dropped: the 8-bit GEMM is dequant/memory-access bound, not matmul-bound, so the
-        // hardware matrix units gave no speedup, and a half-precision path lost too much accuracy.)
-        constexpr uint32_t QT_BM = 64, QT_BN = 64, QT_RM = 4, QT_RN = 4; // must match #defines in the .metal kernel
+        // (matmul_quant_gemm_tiled_f32) -- 64x128 tile, 256 threads x 4x8 micro-tile, weight tile
+        // dequantized ONCE into shared memory and reused across the 64 rows. Tile shape swept at 27B
+        // prefill shapes under clean (uncontended) measurement; the reference is MPS fp32 ~13-14 TFLOP/s.
+        // WINS (now ~6.5 TFLOP/s, was ~6.0): wide N micro-tile RN=8 (intensity: each A value feeds 8 cols)
+        // + BN=128 (keeps 256 threads; RN=8 at BN=64 falls to 128 threads and loses it) + BK=32 (halves
+        // barriers; BK=64 overflows 32KB tgmem). DEAD ENDS (the 8-bit GEMM is dequant-bound, not multiply-
+        // bound): a simdgroup_matrix kernel was 6.6x SLOWER (matrix units speed the multiply, the wrong
+        // part); QT_BM 64->128 (halve dequant passes) was a wash; RN=8 or BK=32 alone were washes.
+        constexpr uint32_t QT_BM = 64, QT_BN = 128, QT_RM = 4, QT_RN = 8; // must match #defines in the .metal kernel
         uint32_t m = (uint32_t)M;
         // Pick the activation-dtype variant. Weights are always 8-bit; only A (in) and OUT vary, for the
         // bf16 FFN activation path (gate/up: f32->bf16; down: bf16->f32). fp32->fp32 is the default.
