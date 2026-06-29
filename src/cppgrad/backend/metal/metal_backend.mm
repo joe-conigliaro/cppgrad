@@ -272,22 +272,28 @@ struct MetalBackend::Impl {
         // [rank-2]/[rank-1] for the matrix. A single collapsed batch stride is wrong for >1 batch dim.
 
         const bool tiny = (P.M < 8 || P.N < 8 || P.K < 8);
-        // For N-D views, fall back to naive kernel (safe for arbitrary strides).
-        // Tiled kernels are only used for proper 2D rank-2 views.
-        const bool is_2d = (rank == 2);
-        const bool fast_packed = is_2d && va.is_rowmaj_nn_2d() && vo.is_rowmaj_nn_2d();
-        const bool nn_layout = fast_packed && vb.is_rowmaj_nn_2d();
-        const bool tn_layout = fast_packed && vb.is_rowmaj_tn_2d();
-        // bf16 weights use the generic naive kernel (the tiled kernels are fp32-only).
+        // bf16 weights use the generic naive kernel (the tiled kernel is fp32-only).
         const bool b_bf16 = (b.dtype() == common::DType::BFLOAT16);
+
+        // The register-blocked tiled kernel handles rank-2 and rank-3 (single batch dim) GEMMs whose
+        // matrix slices (last 2 dims) are row-major: A and O contiguous, B either NN ([K,N] contiguous)
+        // or TN (stored [N,K]). It indexes the matrix via the last-2-dim strides and the (single) batch
+        // dim via bid.z * batch_stride. Anything else -- multi-batch (rank>3), tiny, bf16 weights, or
+        // non-row-major slices -- goes to the naive view kernel, which is safe for arbitrary strides.
+        auto slice_nn = [](const backend::View &v, unsigned second_last) {
+            return v.strides[v.rank - 1] == 1 && v.strides[v.rank - 2] == second_last;
+        };
+        const bool a_nn = slice_nn(va, K), o_nn = slice_nn(vo, N), b_nn = slice_nn(vb, N);
+        const bool b_tn = (vb.strides[rank - 2] == 1 && vb.strides[rank - 1] == K);
+        const bool tileable = (rank <= 3) && !tiny && !b_bf16 && a_nn && o_nn && (b_nn || b_tn);
 
         ComputeWork work;
         work.buffers.push_back({as_mtl(a), 0});
         work.buffers.push_back({as_mtl(b), 0});
         work.buffers.push_back({as_mtl(out), 0});
-        work.add_bytes(3, &P, sizeof(P));
 
-        if (b_bf16 || tiny || (!nn_layout && !tn_layout)) {
+        if (!tileable) {
+            work.add_bytes(3, &P, sizeof(P));
             work.pso = cache->get(b_bf16 ? "matmul_view_bf16w" : "matmul_view_f32");
             NSUInteger w = work.pso.threadExecutionWidth;
             if (w == 0)
@@ -299,11 +305,20 @@ struct MetalBackend::Impl {
             work.grid = MTLSizeMake(P.N, P.M, batch);
             work.threadsPerThreadgroup = MTLSizeMake(w, h, 1);
         } else {
-            constexpr unsigned TM = 16, TN = 16;
-            work.pso = cache->get(nn_layout ? "matmul_tiled_f32" : "matmul_tiled_tn_f32");
+            // Re-point the packed views' [0]/[1] strides at the matrix (last 2) dims; the (single) batch
+            // dim is applied as bid.z * *_batch_stride in the kernel. For rank 2 this is a no-op.
+            P.a_v.strides[0] = va.strides[rank - 2];
+            P.a_v.strides[1] = va.strides[rank - 1];
+            P.b_v.strides[0] = vb.strides[rank - 2];
+            P.b_v.strides[1] = vb.strides[rank - 1];
+            P.o_v.strides[0] = vo.strides[rank - 2];
+            P.o_v.strides[1] = vo.strides[rank - 1];
+            work.add_bytes(3, &P, sizeof(P));
+            constexpr unsigned BM = 64, BN = 64, RM = 4, RN = 4; // must match #defines in the .metal kernel
+            work.pso = cache->get("matmul_tiled_f32");
             work.useThreadgroups = true;
-            work.grid = MTLSizeMake((P.N + TN - 1) / TN, (P.M + TM - 1) / TM, batch);
-            work.threadsPerThreadgroup = MTLSizeMake(TN, TM, 1);
+            work.grid = MTLSizeMake((P.N + BN - 1) / BN, (P.M + BM - 1) / BM, batch);
+            work.threadsPerThreadgroup = MTLSizeMake(BN / RN, BM / RM, 1); // 16x16 = 256
         }
         encode_submit(work);
     }
@@ -416,7 +431,9 @@ struct MetalBackend::Impl {
         // + BN=128 (keeps 256 threads; RN=8 at BN=64 falls to 128 threads and loses it) + BK=32 (halves
         // barriers; BK=64 overflows 32KB tgmem). DEAD ENDS (the 8-bit GEMM is dequant-bound, not multiply-
         // bound): a simdgroup_matrix kernel was 6.6x SLOWER (matrix units speed the multiply, the wrong
-        // part); QT_BM 64->128 (halve dequant passes) was a wash; RN=8 or BK=32 alone were washes.
+        // part); QT_BM 64->128 (halve dequant passes) was a wash; RN=8 or BK=32 alone were washes; half
+        // (fp16) inner math + half tgmem was 5-10% SLOWER (the multiply isn't the bottleneck, so lowering
+        // its precision only adds fp32<->half conversion cost). Next real lever needs a profiled capture.
         constexpr uint32_t QT_BM = 64, QT_BN = 128, QT_RM = 4, QT_RN = 8; // must match #defines in the .metal kernel
         uint32_t m = (uint32_t)M;
         // Pick the activation-dtype variant. Weights are always 8-bit; only A (in) and OUT vary, for the

@@ -420,11 +420,17 @@ kernel void matmul_view_bf16w(device const float *A [[buffer(0)]], device const 
     matmul_view_impl<bfloat>(A, B, C, P, tid);
 }
 
-// Tunables
-#define TM 16
-#define TN 16
-#define TK 16
-
+// Register-blocked, threadgroup-tiled dense GEMM: C[M,N] = A[M,K] @ B[K,N]. Strided views, so a single
+// kernel covers both B layouts (NN: B [K,N]; TN: B stored [N,K]) via b_v strides -- the dispatch routes
+// both here. Each threadgroup computes an MM_BM x MM_BN tile with (MM_BM/MM_RM)x(MM_BN/MM_RN)=256 threads,
+// each owning an MM_RM x MM_RN register micro-tile; A and B tiles are staged in threadgroup memory and
+// reused across the tile. (Replaced a kernel that allocated a full [TM][TN] accumulator per thread but
+// only used row tid.y and ignored tid.x -> 16x redundant compute + register spill, ~0.12 TFLOP/s.)
+#define MM_BM 64
+#define MM_BN 64
+#define MM_BK 16
+#define MM_RM 4
+#define MM_RN 4
 kernel void matmul_tiled_f32(device const float *A [[buffer(0)]], device const float *B [[buffer(1)]],
                              device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
                              uint3 tid [[thread_position_in_threadgroup]], uint3 bid [[threadgroup_position_in_grid]]) {
@@ -436,132 +442,55 @@ kernel void matmul_tiled_f32(device const float *A [[buffer(0)]], device const f
     uint b_off = P.b_v.offset + batch * P.b_batch_stride;
     uint o_off = P.o_v.offset + batch * P.o_batch_stride;
 
-    // Tile origin in output
-    uint row0 = bid.y * TM;
-    uint col0 = bid.x * TN;
+    const uint row0 = bid.y * MM_BM;
+    const uint col0 = bid.x * MM_BN;
+    const uint NT = (MM_BM / MM_RM) * (MM_BN / MM_RN); // 256 threads
+    const uint lt = tid.y * (MM_BN / MM_RN) + tid.x;
 
-    // Accumulator
-    float acc[TM][TN];
-    for (uint i = 0; i < TM; ++i)
-        for (uint j = 0; j < TN; ++j)
+    threadgroup float As[MM_BM][MM_BK];
+    threadgroup float Bs[MM_BK][MM_BN];
+
+    float acc[MM_RM][MM_RN];
+    for (uint i = 0; i < MM_RM; ++i)
+        for (uint j = 0; j < MM_RN; ++j)
             acc[i][j] = 0.0f;
 
-    threadgroup float Asub[TM][TK];
-    threadgroup float Bsub[TK][TN];
-
-    uint tiles = (P.K + TK - 1) / TK;
-
-    for (uint t = 0; t < tiles; ++t) {
-        uint a_row = row0 + tid.y;
-        uint a_col = t * TK + tid.x;
-        if (a_row < P.M && a_col < P.K) {
-            uint a_idx = a_off + a_row * P.a_v.strides[0] + a_col * P.a_v.strides[1];
-            Asub[tid.y][tid.x] = A[a_idx];
-        } else {
-            Asub[tid.y][tid.x] = 0.0f;
+    const uint ktiles = (P.K + MM_BK - 1) / MM_BK;
+    for (uint t = 0; t < ktiles; ++t) {
+        const uint kbase = t * MM_BK;
+        for (uint idx = lt; idx < MM_BM * MM_BK; idx += NT) {
+            uint i = idx / MM_BK, j = idx % MM_BK;
+            uint m = row0 + i, k = kbase + j;
+            As[i][j] = (m < P.M && k < P.K) ? A[a_off + m * P.a_v.strides[0] + k * P.a_v.strides[1]] : 0.0f;
         }
-
-        uint b_row = t * TK + tid.y;
-        uint b_col = col0 + tid.x;
-        if (b_row < P.K && b_col < P.N) {
-            uint b_idx = b_off + b_row * P.b_v.strides[0] + b_col * P.b_v.strides[1];
-            Bsub[tid.y][tid.x] = B[b_idx];
-        } else {
-            Bsub[tid.y][tid.x] = 0.0f;
+        for (uint idx = lt; idx < MM_BK * MM_BN; idx += NT) {
+            uint i = idx / MM_BN, j = idx % MM_BN;
+            uint k = kbase + i, n = col0 + j;
+            Bs[i][j] = (k < P.K && n < P.N) ? B[b_off + k * P.b_v.strides[0] + n * P.b_v.strides[1]] : 0.0f;
         }
-
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
-        for (uint k = 0; k < TK; ++k) {
-            float a = Asub[tid.y][k];
-            for (uint n = 0; n < TN; ++n) {
-                acc[tid.y][n] += a * Bsub[k][n];
-            }
+        for (uint k = 0; k < MM_BK; ++k) {
+            float a[MM_RM], w[MM_RN];
+            for (uint i = 0; i < MM_RM; ++i)
+                a[i] = As[tid.y * MM_RM + i][k];
+            for (uint j = 0; j < MM_RN; ++j)
+                w[j] = Bs[k][tid.x * MM_RN + j];
+            for (uint i = 0; i < MM_RM; ++i)
+                for (uint j = 0; j < MM_RN; ++j)
+                    acc[i][j] += a[i] * w[j];
         }
-
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    uint out_row = row0 + tid.y;
-    for (uint n = 0; n < TN; ++n) {
-        uint out_col = col0 + n;
-        if (out_row < P.M && out_col < P.N) {
-            uint c_idx = o_off + out_row * P.o_v.strides[0] + out_col * P.o_v.strides[1];
-            C[c_idx] = acc[tid.y][n];
-        }
-    }
-}
-
-// Tunables must match host-side expectation
-// #define TM 16
-// #define TN 16
-// #define TK 16
-
-kernel void matmul_tiled_tn_f32(device const float *A [[buffer(0)]], device const float *B [[buffer(1)]],
-                                device float *C [[buffer(2)]], constant mslp::MatmulParams &P [[buffer(3)]],
-                                uint3 tid [[thread_position_in_threadgroup]],
-                                uint3 bid [[threadgroup_position_in_grid]]) {
-    uint batch = bid.z;
-    if (batch >= P.batch)
-        return;
-
-    uint a_off = P.a_v.offset + batch * P.a_batch_stride;
-    uint b_off = P.b_v.offset + batch * P.b_batch_stride;
-    uint o_off = P.o_v.offset + batch * P.o_batch_stride;
-
-    uint row0 = bid.y * TM;
-    uint col0 = bid.x * TN;
-
-    float acc[TM][TN];
-    for (uint i = 0; i < TM; ++i)
-        for (uint j = 0; j < TN; ++j)
-            acc[i][j] = 0.0f;
-
-    threadgroup float Asub[TM][TK];
-    threadgroup float Bsub[TK][TN];
-
-    uint tiles = (P.K + TK - 1) / TK;
-    for (uint t = 0; t < tiles; ++t) {
-        uint a_row = row0 + tid.y;
-        uint a_col = t * TK + tid.x;
-        if (a_row < P.M && a_col < P.K) {
-            uint a_idx = a_off + a_row * P.a_v.strides[0] + a_col * P.a_v.strides[1];
-            Asub[tid.y][tid.x] = A[a_idx];
-        } else {
-            Asub[tid.y][tid.x] = 0.0f;
-        }
-
-        uint k_base = t * TK;
-        uint k_off = tid.y;
-        uint j_off = tid.x;
-        uint k_idx = k_base + k_off;
-        uint j_idx = col0 + j_off;
-
-        if (k_idx < P.K && j_idx < P.N) {
-            uint b_idx = b_off + j_idx * P.b_v.strides[1] + k_idx * P.b_v.strides[0];
-            Bsub[k_off][j_off] = B[b_idx];
-        } else {
-            Bsub[k_off][j_off] = 0.0f;
-        }
-
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-
-        for (uint k = 0; k < TK; ++k) {
-            float a = Asub[tid.y][k];
-            for (uint n = 0; n < TN; ++n) {
-                acc[tid.y][n] += a * Bsub[k][n];
-            }
-        }
-
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-
-    uint out_row = row0 + tid.y;
-    for (uint n = 0; n < TN; ++n) {
-        uint out_col = col0 + n;
-        if (out_row < P.M && out_col < P.N) {
-            uint c_idx = o_off + out_row * P.o_v.strides[0] + out_col * P.o_v.strides[1];
-            C[c_idx] = acc[tid.y][n];
+    for (uint i = 0; i < MM_RM; ++i) {
+        uint m = row0 + tid.y * MM_RM + i;
+        if (m >= P.M)
+            continue;
+        for (uint j = 0; j < MM_RN; ++j) {
+            uint n = col0 + tid.x * MM_RN + j;
+            if (n < P.N)
+                C[o_off + m * P.o_v.strides[0] + n * P.o_v.strides[1]] = acc[i][j];
         }
     }
 }
